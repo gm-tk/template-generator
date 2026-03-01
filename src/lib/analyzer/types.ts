@@ -66,9 +66,6 @@ export interface FileAnalysis {
   /** Map from element to its structural fingerprint */
   fingerprints: Map<ParsedElement, StructuralFingerprint>;
 
-  /** Whether this file was detected as a first page (module intro) */
-  isFirstPage: boolean;
-
   /** Extracted module code (e.g., 'ANZH101') */
   moduleCode: string | null;
 
@@ -93,9 +90,6 @@ export interface FileAnalysis {
  * - All other text (paragraphs, list items) is replaced with lorem ipsum
  */
 export interface ModuleMenuCapture {
-  /** The source type: 'first-page' (tabbed layout) or 'lesson-page' (simple layout) */
-  sourceType: 'first-page' | 'lesson-page';
-
   /**
    * The raw HTML string of the module menu contents,
    * with text replacements applied.
@@ -136,12 +130,6 @@ export interface BatchAnalysisResult {
 
   /** The selected module menu capture for template generation */
   moduleMenu: ModuleMenuCapture | null;
-
-  /** Whether any file was detected as a first page */
-  hasFirstPage: boolean;
-
-  /** The first page's FileAnalysis, if one was detected */
-  firstPageAnalysis: FileAnalysis | null;
 
   /** Template version from the html element (e.g., '1-3') — majority wins */
   templateVersion: string | null;
