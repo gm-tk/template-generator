@@ -34,9 +34,20 @@ src/
       consensus.ts                   # Cross-file pattern-type consensus analysis (Phase 3)
       templateGenerator.ts           # Generate output HTML template from BatchAnalysisResult (Phase 4)
   app/
-    layout.tsx                       # Next.js root layout
-    page.tsx                         # Next.js home page (placeholder)
-  components/                        # React UI components (Phase 5 — empty)
+    layout.tsx                       # Next.js root layout with Tailwind CSS
+    page.tsx                         # Next.js home page — renders TemplateAnalyzer
+    globals.css                      # Tailwind CSS v4 import
+  components/
+    TemplateAnalyzer.tsx             # Main orchestrator — state machine (upload → ready → analyzing → results → error)
+    FileUploadZone.tsx               # Drag-and-drop + file picker upload area
+    FileList.tsx                     # Uploaded file list with remove buttons + size display
+    AnalysisControls.tsx             # Consensus threshold slider + Run Analysis button
+    ProgressIndicator.tsx            # Step-by-step progress during analysis (4 steps)
+    ResultsPanel.tsx                 # Tabbed results container (Preview / Code / Summary) + Download + Copy
+    TemplatePreview.tsx              # Rendered HTML preview via sandboxed iframe (srcDoc)
+    TemplateCode.tsx                 # Raw HTML source code viewer (monospace, copy-to-clipboard)
+    AnalysisSummary.tsx              # Analysis stats dashboard — file count, module code, pattern breakdown
+    ExclusionRegistryPanel.tsx       # Collapsible component exclusion registry viewer with search/filter
   __tests__/
     analyzer/
       bootstrapUtils.test.ts         # 29 tests — column class detection/stripping
@@ -61,7 +72,7 @@ src/
 | 2 | Module Code Extraction, Module Menu Handling | **Complete** |
 | 3 | Consensus Analysis Engine | **Complete** |
 | 4 | Template Generator | **Complete** |
-| 5 | Web Application UI | Not started |
+| 5 | Web Application UI | **Complete** |
 | 6 | Refinement and Edge Cases | Not started |
 
 **Total tests: 245** (all passing across 8 test files)
@@ -219,6 +230,52 @@ A single module — `templateGenerator.ts` — that takes a `BatchAnalysisResult
 - Falls back to a default lesson-page menu with "We are learning:" / "I can:" headings when no module menu is available
 - Template version defaults to `"9-10"` when `batchResult.templateVersion` is null
 - 4-space indentation throughout generated HTML
+
+### Phase 5 — Web Application UI (Complete)
+
+The complete browser-based interface wiring the analysis pipeline to a React/Next.js application. All processing runs client-side — no API routes or server-side processing.
+
+**Architecture:** Single-page application with a linear state machine flow:
+
+```
+Upload Files → Configure Threshold → Run Analysis → View Results → Download Template
+```
+
+**State machine phases:** `upload` → `ready` → `analyzing` → `results` → `error`
+
+**Components built (all in `src/components/`):**
+
+1. **`TemplateAnalyzer.tsx`** — Main orchestrator component (`"use client"`). Manages the `AppPhase` state machine, file state, threshold, analysis progress, results, and errors. Reads uploaded files via `FileReader` API, passes them to `analyzeFiles()` (from `pipeline.ts`), then to `generateTemplate()` (from `templateGenerator.ts`). Uses `setTimeout(..., 0)` to yield to the event loop during heavy computation so the progress indicator renders.
+
+2. **`FileUploadZone.tsx`** — Drag-and-drop upload zone with hidden `<input type="file" multiple accept=".html">` fallback. Filters by `.html` extension. Prevents duplicates by filename. Shows visual drag-over feedback (border/background colour change). Displays a notification for skipped files (non-HTML or duplicates). Compact mode when files are already uploaded.
+
+3. **`FileList.tsx`** — Lists uploaded files with filename, formatted size (B/KB/MB), and remove button (× icon). Shows total file count. Removing all files returns the app to the `upload` phase.
+
+4. **`AnalysisControls.tsx`** — Consensus threshold slider (1–100%, default 50%) with synced numeric input. "Analyze N Files" button with loading/spinner state. Threshold is displayed as a percentage in the UI and converted to a decimal (0.01–1.0) when passed to `analyzeFiles()`.
+
+5. **`ProgressIndicator.tsx`** — Four-step progress display (Reading files → Analyzing structural patterns → Generating template → Complete). Shows file count progress during the reading step. Completed steps display checkmarks; current step shows a spinner. Exports `AnalysisProgress` interface.
+
+6. **`ResultsPanel.tsx`** — Tabbed container (Preview / Code / Summary) with action buttons: Download Template (generates `.html` Blob download), Copy HTML (clipboard), Start Over (resets all state). Download filename uses module code from `batchResult.moduleCode.code` (e.g., `ANZH101_template.html`) or `template.html` when the code is `[MODULE_CODE]`.
+
+7. **`TemplatePreview.tsx`** — Renders the generated template in a sandboxed `<iframe>` using `srcDoc`. Uses `sandbox="allow-scripts allow-same-origin"` so Te Kura's external JS/CSS framework can load. Includes info note about external style dependencies.
+
+8. **`TemplateCode.tsx`** — Displays raw HTML source in a dark-themed monospace code block with horizontal/vertical scroll. Copy-to-clipboard button with "Copied!" feedback state.
+
+9. **`AnalysisSummary.tsx`** — Dashboard showing:
+   - Top-level stat cards: Files Analyzed, Threshold, Module Code (with resolution type), Template Version
+   - Boolean flag badges: Video detected, Module Menu captured, Acknowledgements present
+   - Full pattern breakdown table: pattern label, file count/total, percentage bar, consensus status (checkmark/×), sorted by percentage descending
+   - Empty-consensus warning when no patterns meet the threshold
+
+10. **`ExclusionRegistryPanel.tsx`** — Collapsible panel (collapsed by default) displaying the Component Exclusion Registry as a searchable/filterable tag cloud. Read-only for Phase 5 (Option A — permanent changes require editing `componentExclusionRegistry.ts` directly). Shows class count and filter input.
+
+**Page setup:**
+- `src/app/layout.tsx` — Root layout with metadata title "HTML Template Analyzer — Te Kura", imports `globals.css`
+- `src/app/page.tsx` — Server Component rendering `<TemplateAnalyzer />`
+- `src/app/globals.css` — Tailwind CSS v4 import (`@import "tailwindcss"`)
+- `postcss.config.mjs` — PostCSS config using `@tailwindcss/postcss`
+
+**Visual design:** Clean, functional developer tool aesthetic. Neutral base (whites, greys) with teal accent colour. Tailwind utility classes throughout — no custom CSS. Responsive for desktop and tablet.
 
 ### Key Type Interfaces (types.ts)
 
