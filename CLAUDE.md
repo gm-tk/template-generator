@@ -32,7 +32,7 @@ src/
       moduleMenuHandler.ts           # Module menu DOM capture with text processing
       pipeline.ts                    # analyzeFile() single-file + analyzeFiles() batch pipeline
       consensus.ts                   # Cross-file pattern-type consensus analysis (Phase 3)
-      templateGenerator.ts           # Generate output HTML template (Phase 4 — not started)
+      templateGenerator.ts           # Generate output HTML template from BatchAnalysisResult (Phase 4)
   app/
     layout.tsx                       # Next.js root layout
     page.tsx                         # Next.js home page (placeholder)
@@ -46,6 +46,7 @@ src/
       moduleMenuHandler.test.ts      # 8 tests — menu capture, text preservation/replacement
       consensus.test.ts              # 50 tests — pattern detection + consensus building
       pipeline.test.ts               # 36 tests — full pipeline integration + batch + consensus
+      templateGenerator.test.ts      # 71 tests — template generation, integration + unit + edge cases
   test-fixtures/
       ANZH101_1_0.html               # Real lesson page 1 (h1=01, template 1-3)
       ANZH101_2_0.html               # Real lesson page 2 (h1=02, template 1-3)
@@ -59,11 +60,11 @@ src/
 | 1 | HTML Parser, Style/Column Stripping, Component Exclusion, Fingerprinting | **Complete** |
 | 2 | Module Code Extraction, Module Menu Handling | **Complete** |
 | 3 | Consensus Analysis Engine | **Complete** |
-| 4 | Template Generator | Not started |
+| 4 | Template Generator | **Complete** |
 | 5 | Web Application UI | Not started |
 | 6 | Refinement and Edge Cases | Not started |
 
-**Total tests: 174** (all passing across 7 test files)
+**Total tests: 245** (all passing across 8 test files)
 
 ## Commands
 
@@ -175,6 +176,49 @@ A single module — `consensus.ts` — that takes multiple `FileAnalysis` object
 - `alertVariants` — Consensus alert variants
 - `activityTypes` — Consensus activity types (`'standard'`, `'interactive'`, `'dropbox'`)
 - Convenience booleans: `hasVideoSection`, `hasSidebarImage`, `hasQuoteText`, `hasTables`, `hasImages`, `hasOrderedLists`, `hasUnorderedLists`, `hasButtons`, `hasExternalButtons`, `hasSidebarAlertActivity`
+
+### Phase 4 — Template Generator (Complete)
+
+A single module — `templateGenerator.ts` — that takes a `BatchAnalysisResult` and produces a complete, valid HTML template file as a string.
+
+1. **`templateGenerator.ts`** — One exported function:
+   - `generateTemplate(batchResult)` — Takes the complete output from `analyzeFiles()` and returns a fully valid HTML string — a Te Kura template file ready to open in a browser.
+
+**Architecture:** Builds the template by assembling HTML string sections:
+1. Builds `<head>` with meta tags, title (using resolved module code), and script references (`stickyNav.js` local + `idoc_scripts.js` from CDN)
+2. Builds `<div id="header">` with module code, title, module menu button, and module menu content (uses `processedHTML` from `ModuleMenuCapture` or generates a fallback)
+3. Builds body sections array — only includes sections where the corresponding consensus flag is true
+4. Joins body sections with `<hr>` dividers (no trailing `<hr>`)
+5. Builds `<div id="footer">` with navigation links
+6. Builds acknowledgements section (ALWAYS included)
+7. Concatenates everything into the final HTML document
+
+**Body section order (each preceded by `<h4>` label):**
+1. Heading hierarchy (h2–h5 from `consensus.headingLevels`)
+2. Paragraph (with inline formatting: `<a>`, `<b>`, `<i>`)
+3. Paragraph with sidebar image (if `hasSidebarImage`)
+4. Quote text / quoteAck (if `hasQuoteText`)
+5. Unordered list (if `hasUnorderedLists`)
+6. Ordered list (if `hasOrderedLists`)
+7. Table (if `hasTables`)
+8. Images with caption (if `hasImages`)
+9. Video — canonical markup (if `hasVideoSection`, threshold-independent)
+10. Alerts — one block per variant from `alertVariants`
+11. Sidebar alertActivity (if `hasSidebarAlertActivity`)
+12. Activity standard (if `activityTypes` includes `'standard'`)
+13. Activity interactive (if `activityTypes` includes `'interactive'`)
+14. Activity dropbox (if `activityTypes` includes `'dropbox'`)
+15. Button (if `hasButtons`)
+16. External button (if `hasExternalButtons`)
+
+**Key implementation details:**
+- Uses standardized Bootstrap column classes throughout (e.g., `col-md-8 col-12` for primary content)
+- Activity numbers are sequential: `1A`, `1B`, `1C` — assigned in order of appearance (standard → interactive → dropbox)
+- Alert variant strings from consensus (e.g., `'alert.solid'`) are converted to CSS classes (e.g., `class="alert solid"`)
+- Module menu uses `processedHTML` directly (innerHTML of the moduleMenu div, no wrapper included) — wrapped in `<div id="module-menu-content" class="moduleMenu">`
+- Falls back to a default lesson-page menu with "We are learning:" / "I can:" headings when no module menu is available
+- Template version defaults to `"9-10"` when `batchResult.templateVersion` is null
+- 4-space indentation throughout generated HTML
 
 ### Key Type Interfaces (types.ts)
 
@@ -428,7 +472,7 @@ These are always used in the generated template regardless of source file variat
 
 Test files are in `src/__tests__/analyzer/`. Test fixtures are in `src/test-fixtures/`. All tests use Vitest with `globals: true`.
 
-**174 tests across 7 test files:**
+**245 tests across 8 test files:**
 
 | Test File | Tests | What It Covers |
 |-----------|-------|----------------|
@@ -439,6 +483,7 @@ Test files are in `src/__tests__/analyzer/`. Test fixtures are in `src/test-fixt
 | `moduleMenuHandler.test.ts` | 8 | Menu capture, text preservation/replacement, list normalisation |
 | `consensus.test.ts` | 50 | Pattern detection per file, consensus building, thresholds, edge cases |
 | `pipeline.test.ts` | 36 | Full pipeline integration, batch analysis, consensus integration |
+| `templateGenerator.test.ts` | 71 | Template generation: structural validity, content correctness, consensus-driven sections, module code/menu, acknowledgements, video canonical markup, Bootstrap columns, activity numbering, edge cases (empty/all consensus) |
 
 When writing tests, always verify:
 - No `style` attributes survive in processed ASTs
@@ -459,3 +504,13 @@ When writing tests, always verify:
 - Generated template contains zero inline styles
 - Generated template uses lorem ipsum (not developer labels)
 - Acknowledgements section is always present in output
+- Template output has zero `style=` attributes
+- Template uses standardised Bootstrap column classes (col-md-8 col-12, col-md-12, col-12)
+- Template contains canonical video markup when hasVideoSection is true
+- Template contains module code in `<title>` and `#module-code > h1`
+- Template uses module menu processedHTML or fallback when null
+- Activity numbers are sequential (1A, 1B, 1C)
+- Sections only appear when corresponding consensus flag is true
+- Template defaults to template version "9-10" when null
+- No inconsistency report or diagnostic content in output
+- `<hr>` dividers between body sections but not after the last section
