@@ -10,7 +10,7 @@ A web application that takes multiple HTML files from Te Kura's template system,
 
 - **Framework:** Next.js 14+ (App Router) with TypeScript
 - **HTML parsing:** `htmlparser2` + `domutils` + `domhandler`
-- **Testing:** Vitest
+- **Testing:** Vitest (with `globals: true`, path alias `@` → `./src`)
 - **Styling:** Tailwind CSS
 - **All processing is self-contained** — no external HTML analysis APIs
 
@@ -20,45 +20,142 @@ A web application that takes multiple HTML files from Te Kura's template system,
 src/
   lib/
     analyzer/
-      types.ts                       # All TypeScript interfaces
-      componentExclusionRegistry.ts  # Exclusion registry Set + matching function
-      bootstrapUtils.ts              # Column class detection/stripping
-      htmlParser.ts                  # Raw HTML → ParsedElement tree
-      styleStripper.ts               # Remove inline style attributes
-      textStripper.ts                # Text stripping (handled by parser)
-      componentExcluder.ts           # Prune excluded components from AST
-      fingerprinter.ts               # Generate structural fingerprints
-      pipeline.ts                    # Chains all steps → analyzeFile()
-      consensus.ts                   # Cross-file consensus analysis (Phase 3)
-      templateGenerator.ts           # Generate output HTML template (Phase 4)
-      firstPageDetector.ts           # First page detection + module code extraction
-      moduleMenuHandler.ts           # Module menu structure capture
-  app/                               # Next.js App Router pages
-  components/                        # React UI components (Phase 5)
+      types.ts                       # All TypeScript interfaces (ParsedElement, FileAnalysis, etc.)
+      componentExclusionRegistry.ts  # Exclusion registry Set (100 classes) + matching function
+      bootstrapUtils.ts              # Column class detection (isBootstrapColumnClass) + stripping
+      htmlParser.ts                  # Raw HTML → ParsedElement tree (htmlparser2, skips text nodes)
+      styleStripper.ts               # Remove inline style attributes (mutates AST in place)
+      textStripper.ts                # Text stripping (no-op, handled by parser)
+      componentExcluder.ts           # Prune excluded components from AST + detect special elements
+      fingerprinter.ts               # Generate structural fingerprints (DJB2 hash + signatures)
+      firstPageDetector.ts           # First page detection (filename, title, h1 heuristics)
+      moduleCodeExtractor.ts         # Per-file module code extraction + cross-file resolution
+      moduleMenuHandler.ts           # Module menu DOM capture with text processing
+      pipeline.ts                    # analyzeFile() single-file + analyzeFiles() batch pipeline
+      consensus.ts                   # Cross-file consensus analysis (Phase 3 — not started)
+      templateGenerator.ts           # Generate output HTML template (Phase 4 — not started)
+  app/
+    layout.tsx                       # Next.js root layout
+    page.tsx                         # Next.js home page (placeholder)
+  components/                        # React UI components (Phase 5 — empty)
   __tests__/
-    analyzer/                        # Vitest test files
-  test-fixtures/                     # Real Te Kura HTML files for testing
+    analyzer/
+      bootstrapUtils.test.ts         # 29 tests — column class detection/stripping
+      componentExcluder.test.ts      # 24 tests — exclusion + special element detection
+      fingerprinter.test.ts          # 11 tests — fingerprint generation + hash stability
+      firstPageDetector.test.ts      # 30 tests — filename/title/h1 detection heuristics
+      moduleCodeExtractor.test.ts    # 17 tests — extraction + cross-file resolution
+      moduleMenuHandler.test.ts      # 15 tests — menu capture + text processing
+      pipeline.test.ts               # 41 tests — full pipeline integration + batch analysis
+  test-fixtures/
+      ANZH101_0_0.html               # Synthetic first page (module intro, h1=ANZH101)
+      ANZH101_1_0.html               # Real lesson page 1 (h1=01, template 1-3)
+      ANZH101_2_0.html               # Real lesson page 2 (h1=02, template 1-3)
+      ANZH101_3_0.html               # Real lesson page 3 (h1=03, template 1-3)
 ```
 
 ## Development Phases
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 1 | HTML Parser, Style/Column Stripping, Component Exclusion, Fingerprinting | In progress |
-| 2 | First Page Detection, Module Code Extraction, Module Menu Handling | Not started |
+| 1 | HTML Parser, Style/Column Stripping, Component Exclusion, Fingerprinting | **Complete** |
+| 2 | First Page Detection, Module Code Extraction, Module Menu Handling | **Complete** |
 | 3 | Consensus Analysis Engine | Not started |
 | 4 | Template Generator | Not started |
 | 5 | Web Application UI | Not started |
 | 6 | Refinement and Edge Cases | Not started |
+
+**Total tests: 167** (all passing across 7 test files)
 
 ## Commands
 
 ```bash
 npm run dev          # Start Next.js dev server
 npm run build        # Production build
-npm test             # Run Vitest tests
+npm test             # Run Vitest tests (vitest run)
 npm run test:watch   # Run Vitest in watch mode
 ```
+
+---
+
+## What Has Been Built
+
+### Phase 1 — Parsing Pipeline (Complete)
+
+The core analysis pipeline processes a single HTML file through these steps:
+
+1. **`htmlParser.ts`** — Parses raw HTML via `htmlparser2` into a `ParsedElement` tree. Skips text nodes entirely (structural analysis only). Preserves all attributes, classes, IDs, and hierarchy.
+
+2. **`styleStripper.ts`** — Recursively deletes all `style="..."` attributes from the AST. Mutates in place.
+
+3. **`textStripper.ts`** — No-op placeholder (text nodes already excluded by the parser).
+
+4. **`componentExcluder.ts`** — Two-pass operation:
+   - **Pass 1 (detect):** Walks full tree to record `hasVideoSection`, `hasAcknowledgements`, and captures `moduleMenuElement` (deep cloned) BEFORE any pruning.
+   - **Pass 2 (prune):** Removes elements whose classes match the Component Exclusion Registry. Top-down: excluded element + all descendants are removed; parent stays.
+
+5. **`fingerprinter.ts`** — Generates `StructuralFingerprint` for every non-excluded element. Uses DJB2 hash incorporating: tag name, classes (with Bootstrap column classes stripped via `bootstrapUtils`), ID, sorted attributes, parent hash (nesting context), child signatures, and depth. Produces both a hash string and a human-readable signature like `div.row > div.activity.alertPadding`.
+
+6. **`bootstrapUtils.ts`** — `isBootstrapColumnClass()` detects classes matching `/^col(-(?:sm|md|lg|xl|xxl))?(-(?:\d{1,2}|auto))?$/`. `stripColumnClasses()` filters them from arrays. These are stripped from fingerprints only — never from the raw AST.
+
+7. **`componentExclusionRegistry.ts`** — A `Set<string>` of 100 excluded class names. Case-sensitive, whole-token matching via `isExcludedComponent()`.
+
+### Phase 2 — First Page Detection, Module Code, Module Menu (Complete)
+
+Three new modules that work with **raw HTML strings** (because the Phase 1 AST strips text nodes):
+
+1. **`firstPageDetector.ts`** — `isFirstPage(filename, rawHTML)` returns true if ANY heuristic matches:
+   - **Filename patterns:** `/(?<!\d)0[_.]0/` (matches `0_0`, `0.0` but NOT `10_0`) or `/[_-]00(?:\.|$)/` (matches `_00`, `-00`)
+   - **Title text:** Starts with `0.0` or `00` (but not `001` or `003`)
+   - **Module-code h1:** `#module-code > h1` text matches `/^[A-Z]{2,}/` (module code like `ANZH101` vs lesson number like `01`)
+   - Also exports `extractTitleText(rawHTML)` and `extractModuleCodeH1Text(rawHTML)` helpers.
+
+2. **`moduleCodeExtractor.ts`** — Two functions:
+   - `extractModuleCode(rawHTML, filename)` — Extracts code matching `/[A-Z]{2,}[A-Z0-9]*\d+/`. **Filename-derived code wins** over title-derived code when both exist.
+   - `resolveModuleCode(perFileCodes)` — Cross-file resolution:
+     - All same → `resolution: 'single'`
+     - Shared prefix (2+ chars, 2+ uppercase letters) → `resolution: 'common-prefix'` with the prefix as the code
+     - No meaningful prefix → `resolution: 'unrelated'`, code = `'[MODULE_CODE]'`
+     - Null entries (no code found) are ignored
+
+3. **`moduleMenuHandler.ts`** — `captureModuleMenu(rawHTML, isFirstPage)` extracts and processes the module menu:
+   - Finds `<div id="module-menu-content">` in raw HTML
+   - Handles two structural variants: `moduleMenu` class on same element (first pages) or on inner child div (lesson pages)
+   - **Text processing rules:**
+     - `h3`, `h4`, `h5` text: **PRESERVED exactly** (including child `<span>` elements, leading spaces)
+     - `li > a` inside `ul.nav.nav-tabs`: **PRESERVED** (tab labels)
+     - `p` text: **REPLACED** with `"Lorem ipsum dolor sit amet, consectetur adipisicing elit."`
+     - `li` text: **REPLACED** with cycling lorem ipsum variants (`"Lorem ipsum dolor sit amet."`, `"Consetetur sadipscing elitr."`, etc.)
+   - List items normalised to **max 3 per list** (keeps original count if fewer)
+   - Returns `ModuleMenuCapture` with `sourceType`, `processedHTML`, and `originalHTML`
+
+4. **Updated `pipeline.ts`** — Two public functions:
+   - `analyzeFile(rawHTML, filename)` — 8-step single-file pipeline (Phase 1 steps + Phase 2 first page detection, module code extraction, module menu capture)
+   - `analyzeFiles(files)` — Batch function for multi-file analysis:
+     - Runs `analyzeFile()` on each file
+     - Resolves cross-file module code via `resolveModuleCode()`
+     - Selects best module menu (first page preferred, otherwise first lesson page)
+     - Determines majority template version
+     - Aggregates `hasVideoSection` and `hasAcknowledgements` across all files
+     - Returns `BatchAnalysisResult`
+
+### Key Type Interfaces (types.ts)
+
+```typescript
+ParsedElement          // Internal element tree node (tag, classes, id, attributes, children, depth)
+StructuralFingerprint  // Hash + human-readable signature for structural comparison
+FileAnalysis           // Single-file result (AST, fingerprints, flags, moduleMenuCapture)
+ModuleMenuCapture      // Captured menu: sourceType, processedHTML, originalHTML
+ModuleCodeResult       // Cross-file code: code, resolution, perFileCode map
+BatchAnalysisResult    // Multi-file result: files[], moduleCode, moduleMenu, flags
+```
+
+### Test Fixtures
+
+- **`ANZH101_0_0.html`** — Synthetic first page with `template="1-3"`, title `"0.0 ANZH101 – Origins and Arrivals"`, h1 `ANZH101`, two-column module menu with h3/span headings (Understand, Know, Do, Learning intentions, Supervisors), no activities, no prev-lesson link.
+- **`ANZH101_1_0.html`** — Lesson page with h1 `01`, simple module menu (h5 headings), videoSection, multiChoiceQuiz, dragAndDrop, hintDropContent, alertActivity, 3 activities, inline styles.
+- **`ANZH101_2_0.html`** — Lesson page with h1 `02`, carousel, accordion, two videoSections, quoteText/quoteAck, ordered list, table, alertActivity.
+- **`ANZH101_3_0.html`** — Lesson page with h1 `03`, videoSection, h3 sub-heading, all 3 activity types (standard, interactive, dropbox), activity with internal accordion.
 
 ---
 
@@ -165,28 +262,33 @@ Source files share these patterns:
 - Bootstrap grid layout: `div.row` > `div.col-*` for all content
 - Module code in `<title>` tag and filename (e.g., `ANZH101`, `ENGI401`, `OSAI301`)
 - First pages (00) have tabbed module menus; lesson pages have simpler menus
+- Lesson pages have lesson number in `#module-code > h1` (e.g., `01`, `02`); first pages have the module code (e.g., `ANZH101`)
 - Activity wrappers: `div.activity` with `number` attribute and modifier classes (`alertPadding`, `interactive`, `dropbox`)
 - Footer: `ul.footer-nav` with `#prev-lesson`, `#next-lesson`, `.home-nav`
 
 ### First Page Detection
 
 A file is a "first page" if:
-- Filename contains `0_0`, `0.0`, `_00`, or `-00`
-- OR `<title>` starts with `0.0` or `00`
-- OR `#module-code > h1` contains a module code pattern (letters + numbers) rather than a lesson number
+- Filename contains `0_0`, `0.0`, `_00`, or `-00` (with negative lookbehind to reject `10_0`)
+- OR `<title>` starts with `0.0` or `00` (but not `001`)
+- OR `#module-code > h1` contains a module code pattern (uppercase letters like `ANZH101`) rather than a lesson number (like `01`)
 
 ### Module Code Extraction
 
-Priority order: `<title>` tag → `#module-code > h1` (first page only) → filename. Pattern: `/[A-Z]{2,}[A-Z0-9]*\d+/` (e.g., `ANZH101`). When multiple files have different codes, extract the longest common prefix. If no common prefix exists, use `[MODULE_CODE]`.
+**Per-file priority:** Filename → `<title>` tag. Pattern: `/[A-Z]{2,}[A-Z0-9]*\d+/` (e.g., `ANZH101`). Filename-derived code wins when both exist and differ.
+
+**Cross-file resolution:** All same → `single`. Common prefix (2+ chars with 2+ uppercase) → `common-prefix`. No meaningful prefix → `unrelated` (returns `[MODULE_CODE]`).
 
 ---
 
 ## Module Menu Handling
 
-Even though `moduleMenu` is in the Component Exclusion Registry (excluded from analysis), the template generator MUST produce the full module menu structure:
+Even though `moduleMenu` is in the Component Exclusion Registry (excluded from analysis), the `moduleMenuHandler` captures the raw structure for later template generation:
 
-- **If first page (00) is uploaded:** Use the first page's module menu structure. Preserve `<h4>` and `<h5>` heading text exactly. Replace all other text with lorem ipsum. Include HTML comment showing the lesson-page variant.
+- **If first page (00) is uploaded:** Use the first page's module menu structure. Preserve `<h3>`, `<h4>`, and `<h5>` heading text exactly (including child `<span>` elements). Replace all other text with lorem ipsum. Normalise list items to 3 per list.
 - **If no first page:** Use the simpler lesson-page module menu with `<h5>We are learning:</h5>` / `<h5>I can:</h5>` headings and lorem ipsum list items.
+
+The `ModuleMenuCapture` stores both `processedHTML` (text-replaced) and `originalHTML` (untouched) for template generation in Phase 4.
 
 ---
 
@@ -290,7 +392,19 @@ These are always used in the generated template regardless of source file variat
 
 ## Testing
 
-Test files are in `src/test-fixtures/`. All tests use Vitest.
+Test files are in `src/__tests__/analyzer/`. Test fixtures are in `src/test-fixtures/`. All tests use Vitest with `globals: true`.
+
+**167 tests across 7 test files:**
+
+| Test File | Tests | What It Covers |
+|-----------|-------|----------------|
+| `bootstrapUtils.test.ts` | 29 | Column class regex matching, stripping, edge cases |
+| `componentExcluder.test.ts` | 24 | Exclusion pruning, special element detection, deep clone |
+| `fingerprinter.test.ts` | 11 | Hash generation, signature format, column class stripping in fingerprints |
+| `firstPageDetector.test.ts` | 30 | Filename patterns, title patterns, h1 detection, real fixture tests |
+| `moduleCodeExtractor.test.ts` | 17 | Per-file extraction, cross-file resolution, edge cases |
+| `moduleMenuHandler.test.ts` | 15 | Menu capture, text preservation/replacement, list normalisation |
+| `pipeline.test.ts` | 41 | Full integration (3 lesson pages + first page), batch analysis |
 
 When writing tests, always verify:
 - No `style` attributes survive in processed ASTs
@@ -298,7 +412,13 @@ When writing tests, always verify:
 - Column classes don't affect fingerprint equality
 - `hasVideoSection` is detected BEFORE exclusion occurs
 - Module code extraction works from title tag and filename
-- First page detection handles all filename patterns
+- Filename-derived module code wins over title-derived
+- First page detection handles all filename patterns (including negative cases like `10_0`)
+- Module menu heading text is preserved exactly (h3/h4/h5 with spans)
+- Module menu body text is replaced with lorem ipsum
+- List items are normalised to max 3 per list
+- Cross-file module code resolution handles single, common-prefix, and unrelated cases
+- Batch analysis selects first page menu when available
 - Generated template has exactly one of each ID'd element
 - Generated template contains zero inline styles
 - Generated template uses lorem ipsum (not developer labels)
