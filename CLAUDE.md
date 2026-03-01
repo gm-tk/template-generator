@@ -20,7 +20,7 @@ A web application that takes multiple HTML files from Te Kura's template system,
 src/
   lib/
     analyzer/
-      types.ts                       # All TypeScript interfaces (ParsedElement, FileAnalysis, etc.)
+      types.ts                       # All TypeScript interfaces (ParsedElement, FileAnalysis, ConsensusModel, etc.)
       componentExclusionRegistry.ts  # Exclusion registry Set (100 classes) + matching function
       bootstrapUtils.ts              # Column class detection (isBootstrapColumnClass) + stripping
       htmlParser.ts                  # Raw HTML → ParsedElement tree (htmlparser2, skips text nodes)
@@ -28,11 +28,10 @@ src/
       textStripper.ts                # Text stripping (no-op, handled by parser)
       componentExcluder.ts           # Prune excluded components from AST + detect special elements
       fingerprinter.ts               # Generate structural fingerprints (DJB2 hash + signatures)
-      firstPageDetector.ts           # First page detection (filename, title, h1 heuristics)
       moduleCodeExtractor.ts         # Per-file module code extraction + cross-file resolution
       moduleMenuHandler.ts           # Module menu DOM capture with text processing
       pipeline.ts                    # analyzeFile() single-file + analyzeFiles() batch pipeline
-      consensus.ts                   # Cross-file consensus analysis (Phase 3 — not started)
+      consensus.ts                   # Cross-file pattern-type consensus analysis (Phase 3)
       templateGenerator.ts           # Generate output HTML template (Phase 4 — not started)
   app/
     layout.tsx                       # Next.js root layout
@@ -43,12 +42,11 @@ src/
       bootstrapUtils.test.ts         # 29 tests — column class detection/stripping
       componentExcluder.test.ts      # 24 tests — exclusion + special element detection
       fingerprinter.test.ts          # 11 tests — fingerprint generation + hash stability
-      firstPageDetector.test.ts      # 30 tests — filename/title/h1 detection heuristics
-      moduleCodeExtractor.test.ts    # 17 tests — extraction + cross-file resolution
-      moduleMenuHandler.test.ts      # 15 tests — menu capture + text processing
-      pipeline.test.ts               # 41 tests — full pipeline integration + batch analysis
+      moduleCodeExtractor.test.ts    # 16 tests — extraction + cross-file resolution
+      moduleMenuHandler.test.ts      # 8 tests — menu capture, text preservation/replacement
+      consensus.test.ts              # 50 tests — pattern detection + consensus building
+      pipeline.test.ts               # 36 tests — full pipeline integration + batch + consensus
   test-fixtures/
-      ANZH101_0_0.html               # Synthetic first page (module intro, h1=ANZH101)
       ANZH101_1_0.html               # Real lesson page 1 (h1=01, template 1-3)
       ANZH101_2_0.html               # Real lesson page 2 (h1=02, template 1-3)
       ANZH101_3_0.html               # Real lesson page 3 (h1=03, template 1-3)
@@ -59,13 +57,13 @@ src/
 | Phase | Name | Status |
 |-------|------|--------|
 | 1 | HTML Parser, Style/Column Stripping, Component Exclusion, Fingerprinting | **Complete** |
-| 2 | First Page Detection, Module Code Extraction, Module Menu Handling | **Complete** |
-| 3 | Consensus Analysis Engine | Not started |
+| 2 | Module Code Extraction, Module Menu Handling | **Complete** |
+| 3 | Consensus Analysis Engine | **Complete** |
 | 4 | Template Generator | Not started |
 | 5 | Web Application UI | Not started |
 | 6 | Refinement and Edge Cases | Not started |
 
-**Total tests: 167** (all passing across 7 test files)
+**Total tests: 174** (all passing across 7 test files)
 
 ## Commands
 
@@ -100,17 +98,11 @@ The core analysis pipeline processes a single HTML file through these steps:
 
 7. **`componentExclusionRegistry.ts`** — A `Set<string>` of 100 excluded class names. Case-sensitive, whole-token matching via `isExcludedComponent()`.
 
-### Phase 2 — First Page Detection, Module Code, Module Menu (Complete)
+### Phase 2 — Module Code Extraction, Module Menu Handling (Complete)
 
-Three new modules that work with **raw HTML strings** (because the Phase 1 AST strips text nodes):
+Two modules that work with **raw HTML strings** (because the Phase 1 AST strips text nodes):
 
-1. **`firstPageDetector.ts`** — `isFirstPage(filename, rawHTML)` returns true if ANY heuristic matches:
-   - **Filename patterns:** `/(?<!\d)0[_.]0/` (matches `0_0`, `0.0` but NOT `10_0`) or `/[_-]00(?:\.|$)/` (matches `_00`, `-00`)
-   - **Title text:** Starts with `0.0` or `00` (but not `001` or `003`)
-   - **Module-code h1:** `#module-code > h1` text matches `/^[A-Z]{2,}/` (module code like `ANZH101` vs lesson number like `01`)
-   - Also exports `extractTitleText(rawHTML)` and `extractModuleCodeH1Text(rawHTML)` helpers.
-
-2. **`moduleCodeExtractor.ts`** — Two functions:
+1. **`moduleCodeExtractor.ts`** — Two functions:
    - `extractModuleCode(rawHTML, filename)` — Extracts code matching `/[A-Z]{2,}[A-Z0-9]*\d+/`. **Filename-derived code wins** over title-derived code when both exist.
    - `resolveModuleCode(perFileCodes)` — Cross-file resolution:
      - All same → `resolution: 'single'`
@@ -118,44 +110,95 @@ Three new modules that work with **raw HTML strings** (because the Phase 1 AST s
      - No meaningful prefix → `resolution: 'unrelated'`, code = `'[MODULE_CODE]'`
      - Null entries (no code found) are ignored
 
-3. **`moduleMenuHandler.ts`** — `captureModuleMenu(rawHTML, isFirstPage)` extracts and processes the module menu:
+2. **`moduleMenuHandler.ts`** — `captureModuleMenu(rawHTML)` extracts and processes the module menu:
    - Finds `<div id="module-menu-content">` in raw HTML
-   - Handles two structural variants: `moduleMenu` class on same element (first pages) or on inner child div (lesson pages)
+   - Handles two structural variants: `moduleMenu` class on same element or on inner child div
    - **Text processing rules:**
      - `h3`, `h4`, `h5` text: **PRESERVED exactly** (including child `<span>` elements, leading spaces)
      - `li > a` inside `ul.nav.nav-tabs`: **PRESERVED** (tab labels)
      - `p` text: **REPLACED** with `"Lorem ipsum dolor sit amet, consectetur adipisicing elit."`
      - `li` text: **REPLACED** with cycling lorem ipsum variants (`"Lorem ipsum dolor sit amet."`, `"Consetetur sadipscing elitr."`, etc.)
    - List items normalised to **max 3 per list** (keeps original count if fewer)
-   - Returns `ModuleMenuCapture` with `sourceType`, `processedHTML`, and `originalHTML`
+   - Returns `ModuleMenuCapture` with `processedHTML` and `originalHTML`
 
-4. **Updated `pipeline.ts`** — Two public functions:
-   - `analyzeFile(rawHTML, filename)` — 8-step single-file pipeline (Phase 1 steps + Phase 2 first page detection, module code extraction, module menu capture)
-   - `analyzeFiles(files)` — Batch function for multi-file analysis:
+3. **Updated `pipeline.ts`** — Two public functions:
+   - `analyzeFile(rawHTML, filename)` — 8-step single-file pipeline (Phase 1 steps + Phase 2 module code extraction, module menu capture)
+   - `analyzeFiles(files, threshold?)` — Batch function for multi-file analysis:
      - Runs `analyzeFile()` on each file
      - Resolves cross-file module code via `resolveModuleCode()`
-     - Selects best module menu (first page preferred, otherwise first lesson page)
+     - Selects first available module menu
      - Determines majority template version
      - Aggregates `hasVideoSection` and `hasAcknowledgements` across all files
+     - Builds consensus model via `buildConsensus()` (Phase 3)
      - Returns `BatchAnalysisResult`
+
+### Phase 3 — Consensus Analysis Engine (Complete)
+
+A single module — `consensus.ts` — that takes multiple `FileAnalysis` objects and identifies which structural patterns appear in the majority of files.
+
+**Core concept: Pattern-type consensus, NOT position-based.** The engine does not try to align elements position-for-position across files. Instead, it identifies structural pattern types — categories of structural elements — and counts how many files contain each type.
+
+1. **`consensus.ts`** — Two exported functions:
+   - `detectPatterns(analysis)` — Walks the `#body` section of a single file's processed AST and returns a `Set<string>` of pattern type IDs present in that file.
+   - `buildConsensus(fileAnalyses, threshold?)` — Detects patterns in each file, counts frequencies, and classifies each as consensus (≥ threshold) or not. Default threshold is 0.5 (50%).
+
+**Detected pattern types:**
+| Pattern ID | Category | Detection Rule |
+|-----------|----------|----------------|
+| `heading:h2` through `heading:h5` | heading | `<h2>`–`<h5>` elements inside `#body` (h1 excluded — header only) |
+| `paragraph` | paragraph | `<p>` elements inside `#body` (excluding `p.quoteText`) |
+| `list-unordered` | list-unordered | `<ul>` elements inside `#body` |
+| `list-ordered` | list-ordered | `<ol>` elements inside `#body` |
+| `table` | table | `<table>` elements inside `#body` |
+| `image` | image | `<img>` elements inside `#body` |
+| `video` | video | From `hasVideoSection` flag (set before exclusion) |
+| `alert`, `alert-solid`, `alert-top`, `alert-blank` | alert | `<div class="alert">` with optional modifier classes |
+| `activity-standard` | activity-standard | `<div class="activity">` without `interactive` or `dropbox` |
+| `activity-interactive` | activity-interactive | `<div class="activity interactive">` |
+| `activity-dropbox` | activity-dropbox | `<div class="activity ... dropbox">` |
+| `sidebar-alertActivity` | sidebar-alertActivity | `div.row` with 2+ children where a column child has `div.alertActivity` |
+| `sidebar-image` | paragraph-with-sidebar | `div.row` with 2+ children where a column child has `<img>` |
+| `button` | button | `<a>` containing `<div class="button">` |
+| `external-button` | external-button | `<div class="externalButton">` |
+| `quote` | quote | `<p class="quoteText">` |
+
+**Key rules:**
+- **Video is threshold-independent:** `hasVideoSection` is true if ANY file contains a videoSection, regardless of threshold.
+- **Only #body content is analyzed.** Header, footer, and acknowledgements are not subject to consensus.
+- **Uses the processed AST** (post-exclusion, post-style-stripping) for all detection except video.
+- **Pattern detection uses `fingerprintClasses`** (column classes stripped) for class-based matching.
+
+**ConsensusModel output includes:**
+- `patterns` — All detected pattern types with file counts, percentages, and consensus status
+- `consensusPatterns` — Only patterns meeting the threshold
+- `headingLevels` — Consensus heading levels (e.g., `['h2', 'h3']`)
+- `alertVariants` — Consensus alert variants
+- `activityTypes` — Consensus activity types (`'standard'`, `'interactive'`, `'dropbox'`)
+- Convenience booleans: `hasVideoSection`, `hasSidebarImage`, `hasQuoteText`, `hasTables`, `hasImages`, `hasOrderedLists`, `hasUnorderedLists`, `hasButtons`, `hasExternalButtons`, `hasSidebarAlertActivity`
 
 ### Key Type Interfaces (types.ts)
 
 ```typescript
-ParsedElement          // Internal element tree node (tag, classes, id, attributes, children, depth)
-StructuralFingerprint  // Hash + human-readable signature for structural comparison
-FileAnalysis           // Single-file result (AST, fingerprints, flags, moduleMenuCapture)
-ModuleMenuCapture      // Captured menu: sourceType, processedHTML, originalHTML
-ModuleCodeResult       // Cross-file code: code, resolution, perFileCode map
-BatchAnalysisResult    // Multi-file result: files[], moduleCode, moduleMenu, flags
+ParsedElement           // Internal element tree node (tag, classes, id, attributes, children, depth)
+StructuralFingerprint   // Hash + human-readable signature for structural comparison
+FileAnalysis            // Single-file result (AST, fingerprints, flags, moduleMenuCapture)
+ModuleMenuCapture       // Captured menu: processedHTML, originalHTML
+ModuleCodeResult        // Cross-file code: code, resolution, perFileCode map
+StructuralPatternType   // Pattern type: id, label, category, fileCount, percentage, isConsensus
+ConsensusModel          // Consensus result: patterns, thresholds, convenience booleans
+BatchAnalysisResult     // Multi-file result: files[], moduleCode, moduleMenu, flags, consensus
 ```
 
 ### Test Fixtures
 
-- **`ANZH101_0_0.html`** — Synthetic first page with `template="1-3"`, title `"0.0 ANZH101 – Origins and Arrivals"`, h1 `ANZH101`, two-column module menu with h3/span headings (Understand, Know, Do, Learning intentions, Supervisors), no activities, no prev-lesson link.
-- **`ANZH101_1_0.html`** — Lesson page with h1 `01`, simple module menu (h5 headings), videoSection, multiChoiceQuiz, dragAndDrop, hintDropContent, alertActivity, 3 activities, inline styles.
-- **`ANZH101_2_0.html`** — Lesson page with h1 `02`, carousel, accordion, two videoSections, quoteText/quoteAck, ordered list, table, alertActivity.
-- **`ANZH101_3_0.html`** — Lesson page with h1 `03`, videoSection, h3 sub-heading, all 3 activity types (standard, interactive, dropbox), activity with internal accordion.
+- **`ANZH101_1_0.html`** — Lesson page with h1 `01`, simple module menu (h5 headings), videoSection, multiChoiceQuiz, dragAndDrop, hintDropContent, alertActivity, 3 activities (1 interactive + 2 standard), inline styles, sidebar images.
+- **`ANZH101_2_0.html`** — Lesson page with h1 `02`, carousel, accordion, two videoSections, quoteText/quoteAck, ordered list, unordered list, table, alertActivity, 1 standard activity, sidebar image.
+- **`ANZH101_3_0.html`** — Lesson page with h1 `03`, videoSection, h3 sub-headings, all 3 activity types (standard, interactive, dropbox), activity with internal accordion, unordered list, sidebar image.
+
+**Consensus patterns across fixtures (at 50% threshold = ≥2 of 3 files):**
+- All 3 files: heading:h2, heading:h3, paragraph, image, sidebar-image, alert, activity-standard, video
+- 2 of 3: activity-interactive (files 1,3), list-unordered (files 2,3)
+- 1 only: activity-dropbox (file 3), list-ordered (file 2), table (file 2), quote (file 2)
 
 ---
 
@@ -249,7 +292,7 @@ The generated template must have exactly ONE `<div id="header">`, ONE `<div id="
 
 ### 10. Single Header Approach
 
-The template has exactly ONE `<div id="header">`. If a first page (00) was uploaded, use the first page's header structure with HTML comments noting lesson-page differences. If no first page was uploaded, use the consensus lesson-page header. Never generate two headers.
+The template has exactly ONE `<div id="header">`. Use the consensus lesson-page header. Never generate two headers.
 
 ---
 
@@ -261,17 +304,9 @@ Source files share these patterns:
 - Three-part page structure: `div#header`, `div#body`, `div#footer`, optionally followed by `div.acks`
 - Bootstrap grid layout: `div.row` > `div.col-*` for all content
 - Module code in `<title>` tag and filename (e.g., `ANZH101`, `ENGI401`, `OSAI301`)
-- First pages (00) have tabbed module menus; lesson pages have simpler menus
-- Lesson pages have lesson number in `#module-code > h1` (e.g., `01`, `02`); first pages have the module code (e.g., `ANZH101`)
+- Lesson pages have lesson number in `#module-code > h1` (e.g., `01`, `02`)
 - Activity wrappers: `div.activity` with `number` attribute and modifier classes (`alertPadding`, `interactive`, `dropbox`)
 - Footer: `ul.footer-nav` with `#prev-lesson`, `#next-lesson`, `.home-nav`
-
-### First Page Detection
-
-A file is a "first page" if:
-- Filename contains `0_0`, `0.0`, `_00`, or `-00` (with negative lookbehind to reject `10_0`)
-- OR `<title>` starts with `0.0` or `00` (but not `001`)
-- OR `#module-code > h1` contains a module code pattern (uppercase letters like `ANZH101`) rather than a lesson number (like `01`)
 
 ### Module Code Extraction
 
@@ -285,8 +320,8 @@ A file is a "first page" if:
 
 Even though `moduleMenu` is in the Component Exclusion Registry (excluded from analysis), the `moduleMenuHandler` captures the raw structure for later template generation:
 
-- **If first page (00) is uploaded:** Use the first page's module menu structure. Preserve `<h3>`, `<h4>`, and `<h5>` heading text exactly (including child `<span>` elements). Replace all other text with lorem ipsum. Normalise list items to 3 per list.
-- **If no first page:** Use the simpler lesson-page module menu with `<h5>We are learning:</h5>` / `<h5>I can:</h5>` headings and lorem ipsum list items.
+- Captures the lesson-page module menu with `<h5>We are learning:</h5>` / `<h5>I can:</h5>` headings and lorem ipsum list items.
+- Preserves `<h3>`, `<h4>`, and `<h5>` heading text exactly (including child `<span>` elements). Replaces all other text with lorem ipsum. Normalises list items to 3 per list.
 
 The `ModuleMenuCapture` stores both `processedHTML` (text-replaced) and `originalHTML` (untouched) for template generation in Phase 4.
 
@@ -379,14 +414,13 @@ These are always used in the generated template regardless of source file variat
 
 ## Edge Cases
 
-- **Single file uploaded:** 100% consensus. Still generate acknowledgements.
-- **Two files at 50% threshold:** Elements in both = consensus, elements in one = split.
-- **Only first pages uploaded:** Treat normally.
-- **No first page:** Use lesson-page header only, no first-page comments.
+- **Single file uploaded:** 100% consensus for all detected patterns. Still generate acknowledgements.
+- **Two files at 50% threshold:** `ceil(2 * 0.5) = 1`, so a pattern in just one file is consensus.
 - **Malformed HTML:** Report error, exclude file from analysis.
 - **Mixed template versions:** Warn in UI (not in template output).
 - **New component types not in registry:** Analyzed as regular elements. User can add to registry.
 - **Components nested inside components:** Top-down exclusion handles this automatically.
+- **Video section threshold independence:** `hasVideoSection` is true if ANY file contains a videoSection, regardless of threshold.
 
 ---
 
@@ -394,17 +428,17 @@ These are always used in the generated template regardless of source file variat
 
 Test files are in `src/__tests__/analyzer/`. Test fixtures are in `src/test-fixtures/`. All tests use Vitest with `globals: true`.
 
-**167 tests across 7 test files:**
+**174 tests across 7 test files:**
 
 | Test File | Tests | What It Covers |
 |-----------|-------|----------------|
 | `bootstrapUtils.test.ts` | 29 | Column class regex matching, stripping, edge cases |
 | `componentExcluder.test.ts` | 24 | Exclusion pruning, special element detection, deep clone |
 | `fingerprinter.test.ts` | 11 | Hash generation, signature format, column class stripping in fingerprints |
-| `firstPageDetector.test.ts` | 30 | Filename patterns, title patterns, h1 detection, real fixture tests |
-| `moduleCodeExtractor.test.ts` | 17 | Per-file extraction, cross-file resolution, edge cases |
-| `moduleMenuHandler.test.ts` | 15 | Menu capture, text preservation/replacement, list normalisation |
-| `pipeline.test.ts` | 41 | Full integration (3 lesson pages + first page), batch analysis |
+| `moduleCodeExtractor.test.ts` | 16 | Per-file extraction, cross-file resolution, edge cases |
+| `moduleMenuHandler.test.ts` | 8 | Menu capture, text preservation/replacement, list normalisation |
+| `consensus.test.ts` | 50 | Pattern detection per file, consensus building, thresholds, edge cases |
+| `pipeline.test.ts` | 36 | Full pipeline integration, batch analysis, consensus integration |
 
 When writing tests, always verify:
 - No `style` attributes survive in processed ASTs
@@ -413,12 +447,14 @@ When writing tests, always verify:
 - `hasVideoSection` is detected BEFORE exclusion occurs
 - Module code extraction works from title tag and filename
 - Filename-derived module code wins over title-derived
-- First page detection handles all filename patterns (including negative cases like `10_0`)
 - Module menu heading text is preserved exactly (h3/h4/h5 with spans)
 - Module menu body text is replaced with lorem ipsum
 - List items are normalised to max 3 per list
 - Cross-file module code resolution handles single, common-prefix, and unrelated cases
-- Batch analysis selects first page menu when available
+- Pattern detection uses processed AST (#body section only)
+- Video pattern is threshold-independent (ANY file → consensus)
+- Consensus threshold is applied correctly (default 0.5)
+- Single file = 100% consensus for all detected patterns
 - Generated template has exactly one of each ID'd element
 - Generated template contains zero inline styles
 - Generated template uses lorem ipsum (not developer labels)
