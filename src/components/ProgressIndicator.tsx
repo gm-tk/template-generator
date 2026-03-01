@@ -21,7 +21,7 @@ export default function ProgressIndicator({ progress }: ProgressIndicatorProps) 
   const currentIndex = STEPS.findIndex(s => s.key === progress.step);
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
+    <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6" aria-live="polite" role="status">
       <div className="space-y-3">
         {STEPS.map((step, index) => {
           const isComplete = index < currentIndex || progress.step === 'complete';

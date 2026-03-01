@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { analyzeFiles } from '@/lib/analyzer/pipeline';
 import { generateTemplate } from '@/lib/analyzer/templateGenerator';
+import { COMPONENT_EXCLUSION_REGISTRY } from '@/lib/analyzer/componentExclusionRegistry';
 import type { BatchAnalysisResult } from '@/lib/analyzer/types';
 import FileUploadZone from './FileUploadZone';
 import FileList from './FileList';
@@ -10,6 +11,7 @@ import AnalysisControls from './AnalysisControls';
 import ProgressIndicator, { type AnalysisProgress } from './ProgressIndicator';
 import ResultsPanel from './ResultsPanel';
 import ExclusionRegistryPanel from './ExclusionRegistryPanel';
+import { useToast } from './Toaster';
 
 type AppPhase = 'upload' | 'ready' | 'analyzing' | 'results' | 'error';
 
@@ -30,6 +32,8 @@ export default function TemplateAnalyzer() {
   const [batchResult, setBatchResult] = useState<BatchAnalysisResult | null>(null);
   const [generatedHTML, setGeneratedHTML] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [customRegistry, setCustomRegistry] = useState<Set<string>>(new Set(COMPONENT_EXCLUSION_REGISTRY));
+  const { addToast } = useToast();
 
   const existingFilenames = useMemo(
     () => new Set(files.map(f => f.name)),
@@ -59,6 +63,10 @@ export default function TemplateAnalyzer() {
     });
   }, []);
 
+  const handleNotification = useCallback((message: string) => {
+    addToast(message, 'warning');
+  }, [addToast]);
+
   const runAnalysis = useCallback(async () => {
     setPhase('analyzing');
     setError(null);
@@ -75,18 +83,21 @@ export default function TemplateAnalyzer() {
         setProgress({ step: 'reading', current: i + 1, total: files.length });
       }
 
-      // Step 2: Run analysis pipeline
+      // Step 2: Run analysis pipeline (yields to event loop via setTimeout)
       setProgress({ step: 'analyzing', current: 0, total: fileInputs.length });
-      // Use setTimeout to yield to the event loop so the progress indicator can render
+      await new Promise(resolve => setTimeout(resolve, 0));
+
       const result = await new Promise<BatchAnalysisResult>((resolve) => {
         setTimeout(() => {
-          resolve(analyzeFiles(fileInputs, threshold / 100));
+          resolve(analyzeFiles(fileInputs, threshold / 100, customRegistry));
         }, 0);
       });
       setBatchResult(result);
 
-      // Step 3: Generate template
+      // Step 3: Generate template (yields to event loop via setTimeout)
       setProgress({ step: 'generating', current: 0, total: 1 });
+      await new Promise(resolve => setTimeout(resolve, 0));
+
       const html = await new Promise<string>((resolve) => {
         setTimeout(() => {
           resolve(generateTemplate(result));
@@ -101,7 +112,7 @@ export default function TemplateAnalyzer() {
       setError(err instanceof Error ? err.message : 'An unexpected error occurred during analysis.');
       setPhase('error');
     }
-  }, [files, threshold]);
+  }, [files, threshold, customRegistry]);
 
   const handleStartOver = useCallback(() => {
     setFiles([]);
@@ -111,7 +122,17 @@ export default function TemplateAnalyzer() {
     setBatchResult(null);
     setGeneratedHTML(null);
     setError(null);
+    setCustomRegistry(new Set(COMPONENT_EXCLUSION_REGISTRY));
   }, []);
+
+  const handleRegistryChange = useCallback((registry: Set<string>) => {
+    setCustomRegistry(registry);
+  }, []);
+
+  const handleRegistryReset = useCallback(() => {
+    setCustomRegistry(new Set(COMPONENT_EXCLUSION_REGISTRY));
+    addToast('Registry reset to defaults', 'info');
+  }, [addToast]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -129,6 +150,8 @@ export default function TemplateAnalyzer() {
           onFilesAdded={handleFilesAdded}
           existingFilenames={existingFilenames}
           compact={phase !== 'upload'}
+          currentFileCount={files.length}
+          onNotification={handleNotification}
         />
 
         {/* File list */}
@@ -154,7 +177,7 @@ export default function TemplateAnalyzer() {
 
         {/* Error state */}
         {phase === 'error' && error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4" role="alert">
             <h3 className="text-sm font-medium text-red-800 mb-1">Analysis Error</h3>
             <p className="text-sm text-red-700">{error}</p>
             <div className="mt-3 flex gap-2">
@@ -184,7 +207,10 @@ export default function TemplateAnalyzer() {
         )}
 
         {/* Exclusion registry */}
-        <ExclusionRegistryPanel />
+        <ExclusionRegistryPanel
+          registry={customRegistry}
+          onRegistryChange={handleRegistryChange}
+        />
       </div>
     </div>
   );

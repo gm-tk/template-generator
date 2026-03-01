@@ -26,29 +26,31 @@ src/
       htmlParser.ts                  # Raw HTML → ParsedElement tree (htmlparser2, skips text nodes)
       styleStripper.ts               # Remove inline style attributes (mutates AST in place)
       textStripper.ts                # Text stripping (no-op, handled by parser)
-      componentExcluder.ts           # Prune excluded components from AST + detect special elements
+      componentExcluder.ts           # Prune excluded components from AST + detect special elements (supports custom registry)
       fingerprinter.ts               # Generate structural fingerprints (DJB2 hash + signatures)
       moduleCodeExtractor.ts         # Per-file module code extraction + cross-file resolution
       moduleMenuHandler.ts           # Module menu DOM capture with text processing
-      pipeline.ts                    # analyzeFile() single-file + analyzeFiles() batch pipeline
+      pipeline.ts                    # analyzeFile() + analyzeFiles() + validateHTML() + isTekuraFile() + extractTemplateVersionFromHTML()
       consensus.ts                   # Cross-file pattern-type consensus analysis (Phase 3)
       templateGenerator.ts           # Generate output HTML template from BatchAnalysisResult (Phase 4)
   app/
     layout.tsx                       # Next.js root layout with Tailwind CSS
-    page.tsx                         # Next.js home page — renders TemplateAnalyzer
+    page.tsx                         # Client component — wraps TemplateAnalyzer in ToastProvider
     globals.css                      # Tailwind CSS v4 import
   components/
-    TemplateAnalyzer.tsx             # Main orchestrator — state machine (upload → ready → analyzing → results → error)
-    FileUploadZone.tsx               # Drag-and-drop + file picker upload area
-    FileList.tsx                     # Uploaded file list with remove buttons + size display
+    TemplateAnalyzer.tsx             # Main orchestrator — state machine, custom registry state, toast integration
+    FileUploadZone.tsx               # Drag-and-drop + file picker, keyboard accessible, 100-file limit, ARIA
+    FileList.tsx                     # Uploaded file list with ARIA labels, role="list", 30+ file warning
     AnalysisControls.tsx             # Consensus threshold slider + Run Analysis button
-    ProgressIndicator.tsx            # Step-by-step progress during analysis (4 steps)
-    ResultsPanel.tsx                 # Tabbed results container (Preview / Code / Summary) + Download + Copy
+    ProgressIndicator.tsx            # Step-by-step progress during analysis (4 steps), aria-live
+    ResultsPanel.tsx                 # ARIA tablist with arrow key navigation, toast notifications, scrollIntoView
     TemplatePreview.tsx              # Rendered HTML preview via sandboxed iframe (srcDoc)
     TemplateCode.tsx                 # Raw HTML source code viewer (monospace, copy-to-clipboard)
-    AnalysisSummary.tsx              # Analysis stats dashboard — file count, module code, pattern breakdown
-    ExclusionRegistryPanel.tsx       # Collapsible component exclusion registry viewer with search/filter
+    AnalysisSummary.tsx              # Analysis stats dashboard — file errors, mixed versions, non-Te Kura warnings, ARIA
+    ExclusionRegistryPanel.tsx       # Interactive exclusion registry — add/remove/reset/search/filter/validation
+    Toaster.tsx                      # Toast notification system (React Context) — info/success/warning/error
   __tests__/
+    setup.ts                         # Test setup — imports @testing-library/jest-dom
     analyzer/
       bootstrapUtils.test.ts         # 29 tests — column class detection/stripping
       componentExcluder.test.ts      # 24 tests — exclusion + special element detection
@@ -58,7 +60,20 @@ src/
       consensus.test.ts              # 50 tests — pattern detection + consensus building
       pipeline.test.ts               # 36 tests — full pipeline integration + batch + consensus
       templateGenerator.test.ts      # 71 tests — template generation, integration + unit + edge cases
+      malformedHtml.test.ts          # 14 tests — empty files, non-HTML, mixed valid/invalid batches, size limits
+      templateDetection.test.ts      # 15 tests — template version extraction, Te Kura detection, mixed versions
+      customRegistry.test.ts         # 6 tests — custom registry pipeline integration
+      firstPageIntegration.test.ts   # 11 tests — first page fixture, batch with first+lesson pages
+    components/
+      FileUploadZone.test.tsx        # 5 tests — rendering, compact mode, ARIA, drag-over
+      FileList.test.tsx              # 6 tests — file display, remove, aria-labels, empty state
+      AnalysisControls.test.tsx      # 7 tests — threshold, disabled/enabled, loading, click
+      AnalysisSummary.test.tsx       # 11 tests — stats, errors, warnings, single/two file messaging
+      ExclusionRegistryPanel.test.tsx # 9 tests — add/remove/reset/search/filter/validation
+    integration/
+      fullPipeline.test.ts           # 27 tests — end-to-end pipeline + template generation with real fixtures
   test-fixtures/
+      ANZH101_0_0.html               # First page fixture (module menu with tabs, no prev-lesson)
       ANZH101_1_0.html               # Real lesson page 1 (h1=01, template 1-3)
       ANZH101_2_0.html               # Real lesson page 2 (h1=02, template 1-3)
       ANZH101_3_0.html               # Real lesson page 3 (h1=03, template 1-3)
@@ -73,9 +88,9 @@ src/
 | 3 | Consensus Analysis Engine | **Complete** |
 | 4 | Template Generator | **Complete** |
 | 5 | Web Application UI | **Complete** |
-| 6 | Refinement and Edge Cases | Not started |
+| 6 | Refinement and Edge Cases | **Complete** |
 
-**Total tests: 245** (all passing across 8 test files)
+**Total tests: 356** (all passing across 18 test files)
 
 ## Commands
 
@@ -100,9 +115,9 @@ The core analysis pipeline processes a single HTML file through these steps:
 
 3. **`textStripper.ts`** — No-op placeholder (text nodes already excluded by the parser).
 
-4. **`componentExcluder.ts`** — Two-pass operation:
+4. **`componentExcluder.ts`** — Two-pass operation with optional custom registry:
    - **Pass 1 (detect):** Walks full tree to record `hasVideoSection`, `hasAcknowledgements`, and captures `moduleMenuElement` (deep cloned) BEFORE any pruning.
-   - **Pass 2 (prune):** Removes elements whose classes match the Component Exclusion Registry. Top-down: excluded element + all descendants are removed; parent stays.
+   - **Pass 2 (prune):** Removes elements whose classes match the exclusion registry. Top-down: excluded element + all descendants are removed; parent stays. Accepts optional `customRegistry` parameter; falls back to `COMPONENT_EXCLUSION_REGISTRY`.
 
 5. **`fingerprinter.ts`** — Generates `StructuralFingerprint` for every non-excluded element. Uses DJB2 hash incorporating: tag name, classes (with Bootstrap column classes stripped via `bootstrapUtils`), ID, sorted attributes, parent hash (nesting context), child signatures, and depth. Produces both a hash string and a human-readable signature like `div.row > div.activity.alertPadding`.
 
@@ -133,16 +148,20 @@ Two modules that work with **raw HTML strings** (because the Phase 1 AST strips 
    - List items normalised to **max 3 per list** (keeps original count if fewer)
    - Returns `ModuleMenuCapture` with `processedHTML` and `originalHTML`
 
-3. **Updated `pipeline.ts`** — Two public functions:
-   - `analyzeFile(rawHTML, filename)` — 8-step single-file pipeline (Phase 1 steps + Phase 2 module code extraction, module menu capture)
-   - `analyzeFiles(files, threshold?)` — Batch function for multi-file analysis:
-     - Runs `analyzeFile()` on each file
+3. **Updated `pipeline.ts`** — Five public functions:
+   - `analyzeFile(rawHTML, filename, customRegistry?)` — 8-step single-file pipeline (Phase 1 steps + Phase 2 module code extraction, module menu capture). Optional custom exclusion registry.
+   - `analyzeFiles(files, threshold?, customRegistry?)` — Batch function for multi-file analysis with per-file error handling:
+     - Validates and runs `analyzeFile()` on each file (catches errors per-file)
      - Resolves cross-file module code via `resolveModuleCode()`
      - Selects first available module menu
      - Determines majority template version
      - Aggregates `hasVideoSection` and `hasAcknowledgements` across all files
+     - Detects template version mismatches and non-Te Kura files
      - Builds consensus model via `buildConsensus()` (Phase 3)
-     - Returns `BatchAnalysisResult`
+     - Returns `BatchAnalysisResult` (throws only if ALL files fail)
+   - `validateHTML(rawHTML, filename)` — Pre-analysis validation (empty, no HTML tags, >20MB)
+   - `isTekuraFile(rawHTML)` — Detects Te Kura template files (≥2 of 4 signals)
+   - `extractTemplateVersionFromHTML(rawHTML)` — Regex extraction of template version from raw HTML
 
 ### Phase 3 — Consensus Analysis Engine (Complete)
 
@@ -245,17 +264,17 @@ Upload Files → Configure Threshold → Run Analysis → View Results → Downl
 
 **Components built (all in `src/components/`):**
 
-1. **`TemplateAnalyzer.tsx`** — Main orchestrator component (`"use client"`). Manages the `AppPhase` state machine, file state, threshold, analysis progress, results, and errors. Reads uploaded files via `FileReader` API, passes them to `analyzeFiles()` (from `pipeline.ts`), then to `generateTemplate()` (from `templateGenerator.ts`). Uses `setTimeout(..., 0)` to yield to the event loop during heavy computation so the progress indicator renders.
+1. **`TemplateAnalyzer.tsx`** — Main orchestrator component (`"use client"`). Manages the `AppPhase` state machine, file state, threshold, custom exclusion registry state, analysis progress, results, and errors. Reads uploaded files via `FileReader` API, passes them to `analyzeFiles()` with custom registry, then to `generateTemplate()`. Uses `setTimeout(..., 0)` to yield to the event loop. Integrates with toast notifications via `useToast()`.
 
-2. **`FileUploadZone.tsx`** — Drag-and-drop upload zone with hidden `<input type="file" multiple accept=".html">` fallback. Filters by `.html` extension. Prevents duplicates by filename. Shows visual drag-over feedback (border/background colour change). Displays a notification for skipped files (non-HTML or duplicates). Compact mode when files are already uploaded.
+2. **`FileUploadZone.tsx`** — Drag-and-drop upload zone with hidden `<input type="file" multiple accept=".html">` fallback. Filters by `.html` extension. Prevents duplicates by filename. Shows visual drag-over feedback (border/background colour change, text change). Displays notifications for skipped files. Compact mode. Keyboard accessible (`role="button"`, Enter/Space). 100-file hard limit. ARIA attributes.
 
-3. **`FileList.tsx`** — Lists uploaded files with filename, formatted size (B/KB/MB), and remove button (× icon). Shows total file count. Removing all files returns the app to the `upload` phase.
+3. **`FileList.tsx`** — Lists uploaded files with filename, formatted size (B/KB/MB), and remove button (× icon). Shows total file count. Removing all files returns the app to the `upload` phase. `role="list"`, `aria-label` on items and buttons. 30+ file warning.
 
 4. **`AnalysisControls.tsx`** — Consensus threshold slider (1–100%, default 50%) with synced numeric input. "Analyze N Files" button with loading/spinner state. Threshold is displayed as a percentage in the UI and converted to a decimal (0.01–1.0) when passed to `analyzeFiles()`.
 
-5. **`ProgressIndicator.tsx`** — Four-step progress display (Reading files → Analyzing structural patterns → Generating template → Complete). Shows file count progress during the reading step. Completed steps display checkmarks; current step shows a spinner. Exports `AnalysisProgress` interface.
+5. **`ProgressIndicator.tsx`** — Four-step progress display (Reading files → Analyzing structural patterns → Generating template → Complete). Shows file count progress during the reading step. Completed steps display checkmarks; current step shows a spinner. `aria-live="polite"`, `role="status"`. Exports `AnalysisProgress` interface.
 
-6. **`ResultsPanel.tsx`** — Tabbed container (Preview / Code / Summary) with action buttons: Download Template (generates `.html` Blob download), Copy HTML (clipboard), Start Over (resets all state). Download filename uses module code from `batchResult.moduleCode.code` (e.g., `ANZH101_template.html`) or `template.html` when the code is `[MODULE_CODE]`.
+6. **`ResultsPanel.tsx`** — Tabbed container (Preview / Code / Summary) with full ARIA tab pattern (`role="tablist/tab/tabpanel"`, `aria-selected`, `aria-controls`, `tabIndex`), arrow key left/right navigation. Action buttons: Download Template, Copy HTML (toast notifications), Start Over. `scrollIntoView` on mount.
 
 7. **`TemplatePreview.tsx`** — Renders the generated template in a sandboxed `<iframe>` using `srcDoc`. Uses `sandbox="allow-scripts allow-same-origin"` so Te Kura's external JS/CSS framework can load. Includes info note about external style dependencies.
 
@@ -264,18 +283,96 @@ Upload Files → Configure Threshold → Run Analysis → View Results → Downl
 9. **`AnalysisSummary.tsx`** — Dashboard showing:
    - Top-level stat cards: Files Analyzed, Threshold, Module Code (with resolution type), Template Version
    - Boolean flag badges: Video detected, Module Menu captured, Acknowledgements present
+   - File error warnings (amber), mixed template version warnings (amber), non-Te Kura file info (blue)
+   - Single-file and two-file informational notes
    - Full pattern breakdown table: pattern label, file count/total, percentage bar, consensus status (checkmark/×), sorted by percentage descending
-   - Empty-consensus warning when no patterns meet the threshold
+   - Zero-consensus warning when no patterns meet the threshold
+   - ARIA attributes: `role="alert"` on warnings, `role="status"` on info, `aria-label` on sections
 
-10. **`ExclusionRegistryPanel.tsx`** — Collapsible panel (collapsed by default) displaying the Component Exclusion Registry as a searchable/filterable tag cloud. Read-only for Phase 5 (Option A — permanent changes require editing `componentExclusionRegistry.ts` directly). Shows class count and filter input.
+10. **`ExclusionRegistryPanel.tsx`** — Interactive collapsible panel (collapsed by default). Features: add class (with Enter key and validation), remove class, reset to defaults, search/filter, "Modified +N -M" indicator. Validation: empty, whitespace, duplicate. ARIA: `aria-expanded`, `aria-controls`, `aria-label`, `aria-live`.
+
+11. **`Toaster.tsx`** — Toast notification system using React Context. Supports info/success/warning/error types with auto-dismiss (3s). `ToastProvider` wraps the app in `page.tsx`. `useToast()` hook provides `addToast(message, type)` for components.
 
 **Page setup:**
 - `src/app/layout.tsx` — Root layout with metadata title "HTML Template Analyzer — Te Kura", imports `globals.css`
-- `src/app/page.tsx` — Server Component rendering `<TemplateAnalyzer />`
+- `src/app/page.tsx` — Client Component wrapping `<TemplateAnalyzer />` in `<ToastProvider>`
 - `src/app/globals.css` — Tailwind CSS v4 import (`@import "tailwindcss"`)
 - `postcss.config.mjs` — PostCSS config using `@tailwindcss/postcss`
 
 **Visual design:** Clean, functional developer tool aesthetic. Neutral base (whites, greys) with teal accent colour. Tailwind utility classes throughout — no custom CSS. Responsive for desktop and tablet.
+
+### Phase 6 — Refinement and Edge Cases (Complete)
+
+Phase 6 adds robustness, accessibility, and UI polish across 8 work areas:
+
+#### Area 1: Malformed HTML Handling
+
+- **`validateHTML(rawHTML, filename)`** — Pre-analysis validation: rejects empty files, non-HTML content, and files >20MB.
+- **Per-file error handling** in `analyzeFiles()`: individual files that fail validation or throw during analysis are captured in `fileErrors` rather than crashing the batch. Only throws if ALL files fail.
+- **`FileError` interface** added to `types.ts`: `{ filename: string; error: string }`.
+- **`BatchAnalysisResult`** extended with: `fileErrors`, `templateVersions`, `isMixedTemplateVersions`, `nonTekuraFiles`.
+
+#### Area 2: Template Version and Family Mismatch Detection
+
+- **`isTekuraFile(rawHTML)`** — Detects Te Kura template files using 4 signals (template attribute, idoc_scripts.js, header/body/footer divs, notranslate class). Requires ≥2 signals to match.
+- **`extractTemplateVersionFromHTML(rawHTML)`** — Extracts template version from raw HTML via regex.
+- **Template version tracking** in `analyzeFiles()`: counts versions across files, flags `isMixedTemplateVersions` when >1 version detected.
+- **Non-Te Kura file tracking**: files that don't match the Te Kura signature are listed in `nonTekuraFiles`.
+
+#### Area 3: Custom Exclusion Registry Integration
+
+- **`componentExcluder.ts`** updated: `excludeComponents()` accepts optional `customRegistry?: Set<string>` parameter. Falls back to default `COMPONENT_EXCLUSION_REGISTRY` when not provided.
+- **`pipeline.ts`** updated: both `analyzeFile()` and `analyzeFiles()` accept optional `customRegistry` parameter, passed through to the excluder.
+- Full backward compatibility: all existing calls without `customRegistry` continue to work identically.
+
+#### Area 4: First Page Handling Polish
+
+- **`ANZH101_0_0.html`** — New test fixture for the first page (lesson 0.0) with tabbed module menu (Overview/Information tabs), h4/h5 headings, nav-tabs, no prev-lesson in footer.
+- **`firstPageIntegration.test.ts`** — 11 tests verifying first page processing, batch analysis with first+lesson pages, module menu capture, and edge cases.
+
+#### Area 5: Small File Set Edge Cases
+
+- **`AnalysisSummary.tsx`** updated with conditional UI sections:
+  - File error warnings (amber, lists each failed file)
+  - Mixed template version warnings (amber, shows version counts)
+  - Non-Te Kura file info (blue, lists filenames)
+  - Single-file informational note
+  - Two-file messaging about reduced consensus reliability
+  - Zero-consensus warning with current threshold percentage
+
+#### Area 6: Performance — setTimeout Yielding
+
+- Existing `setTimeout(..., 0)` approach in `TemplateAnalyzer.tsx` retained and enhanced with additional yield point before analysis starts, ensuring the progress indicator renders before heavy computation.
+
+#### Area 7: Accessibility and UI Polish
+
+- **`Toaster.tsx`** — New toast notification system using React Context. Supports info/success/warning/error types with auto-dismiss (3s). `ToastProvider` wraps the app, `useToast()` hook provides `addToast()`.
+- **`FileUploadZone.tsx`** — Keyboard accessible (`role="button"`, `tabIndex={0}`, Enter/Space activation), 100-file hard limit, `aria-label`, `aria-hidden` on hidden input, drag-over text change.
+- **`FileList.tsx`** — `role="list"`, `aria-label` on list items and remove buttons, `aria-hidden` on decorative SVGs, 30+ file warning.
+- **`ResultsPanel.tsx`** — Full ARIA tab pattern (`role="tablist/tab/tabpanel"`, `aria-selected`, `aria-controls`, `aria-labelledby`, `tabIndex`), arrow key left/right navigation, `scrollIntoView` on mount, toast integration.
+- **`ProgressIndicator.tsx`** — `aria-live="polite"`, `role="status"`.
+- **`ExclusionRegistryPanel.tsx`** — Rewritten from read-only to interactive: add (with Enter key), remove, reset, search/filter, validation (empty/whitespace/duplicate), "Modified +N -M" indicator, `aria-expanded`, `aria-controls`, `aria-live`.
+- **`AnalysisSummary.tsx`** — ARIA attributes: `role="alert"` on warnings, `role="status"` on info, `aria-label` on sections.
+- **`TemplateAnalyzer.tsx`** — Custom registry state management, passes registry to `analyzeFiles()`, registry reset on Start Over.
+- **`page.tsx`** — Changed to `'use client'`, wraps `TemplateAnalyzer` in `ToastProvider`.
+
+#### Area 8: Automated Tests
+
+**Component tests** (5 files, 38 tests total, using `@testing-library/react` + `@testing-library/user-event` + `jsdom`):
+- `FileUploadZone.test.tsx` — 5 tests (rendering, compact mode, ARIA, hidden input, drag-over)
+- `FileList.test.tsx` — 6 tests (file display, remove callback, count text, singular, empty, aria-labels)
+- `AnalysisControls.test.tsx` — 7 tests (default threshold, slider, disabled/enabled, loading, click, singular)
+- `AnalysisSummary.test.tsx` — 11 tests (stats, module code, version, errors, mixed versions, non-Te Kura, single file, two files, zero consensus, pattern list)
+- `ExclusionRegistryPanel.test.tsx` — 9 tests (class count, expand/collapse, add, duplicate, whitespace, remove, reset, filter, modified indicator)
+
+**Integration test** (1 file, 27 tests):
+- `fullPipeline.test.ts` — End-to-end pipeline tests with real fixture files: batch analysis, template generation, consensus verification, threshold variation, custom registry, error handling, validation, Te Kura detection, single file, first page, version tracking.
+
+**Analyzer tests** (4 new files, 46 tests):
+- `malformedHtml.test.ts` — 14 tests (empty, non-HTML, partial failures, all-fail, broken tags, size limit)
+- `templateDetection.test.ts` — 15 tests (version extraction, Te Kura detection signals, mixed versions, non-Te Kura tracking)
+- `customRegistry.test.ts` — 6 tests (custom registry pipeline, videoSection removal, alert exclusion, empty registry)
+- `firstPageIntegration.test.ts` — 11 tests (first page processing, batch with first+lesson, menu preservation)
 
 ### Key Type Interfaces (types.ts)
 
@@ -287,11 +384,13 @@ ModuleMenuCapture       // Captured menu: processedHTML, originalHTML
 ModuleCodeResult        // Cross-file code: code, resolution, perFileCode map
 StructuralPatternType   // Pattern type: id, label, category, fileCount, percentage, isConsensus
 ConsensusModel          // Consensus result: patterns, thresholds, convenience booleans
-BatchAnalysisResult     // Multi-file result: files[], moduleCode, moduleMenu, flags, consensus
+FileError               // Failed file: filename, error message
+BatchAnalysisResult     // Multi-file result: files[], moduleCode, moduleMenu, flags, consensus, fileErrors, templateVersions, isMixedTemplateVersions, nonTekuraFiles
 ```
 
 ### Test Fixtures
 
+- **`ANZH101_0_0.html`** — First page fixture (lesson 0.0) with module code in h1, dual h1 titles, tabbed module menu (Overview/Information tabs), nav-tabs, h4/h5 headings, no prev-lesson in footer.
 - **`ANZH101_1_0.html`** — Lesson page with h1 `01`, simple module menu (h5 headings), videoSection, multiChoiceQuiz, dragAndDrop, hintDropContent, alertActivity, 3 activities (1 interactive + 2 standard), inline styles, sidebar images.
 - **`ANZH101_2_0.html`** — Lesson page with h1 `02`, carousel, accordion, two videoSections, quoteText/quoteAck, ordered list, unordered list, table, alertActivity, 1 standard activity, sidebar image.
 - **`ANZH101_3_0.html`** — Lesson page with h1 `03`, videoSection, h3 sub-headings, all 3 activity types (standard, interactive, dropbox), activity with internal accordion, unordered list, sidebar image.
@@ -527,12 +626,13 @@ These are always used in the generated template regardless of source file variat
 
 ## Testing
 
-Test files are in `src/__tests__/analyzer/`. Test fixtures are in `src/test-fixtures/`. All tests use Vitest with `globals: true`.
+Test files are in `src/__tests__/`. Test fixtures are in `src/test-fixtures/`. All tests use Vitest with `globals: true`. Component tests use `@testing-library/react` + `@testing-library/user-event` with `// @vitest-environment jsdom` annotation.
 
-**245 tests across 8 test files:**
+**356 tests across 18 test files:**
 
 | Test File | Tests | What It Covers |
 |-----------|-------|----------------|
+| **Analyzer Tests** | | |
 | `bootstrapUtils.test.ts` | 29 | Column class regex matching, stripping, edge cases |
 | `componentExcluder.test.ts` | 24 | Exclusion pruning, special element detection, deep clone |
 | `fingerprinter.test.ts` | 11 | Hash generation, signature format, column class stripping in fingerprints |
@@ -540,7 +640,19 @@ Test files are in `src/__tests__/analyzer/`. Test fixtures are in `src/test-fixt
 | `moduleMenuHandler.test.ts` | 8 | Menu capture, text preservation/replacement, list normalisation |
 | `consensus.test.ts` | 50 | Pattern detection per file, consensus building, thresholds, edge cases |
 | `pipeline.test.ts` | 36 | Full pipeline integration, batch analysis, consensus integration |
-| `templateGenerator.test.ts` | 71 | Template generation: structural validity, content correctness, consensus-driven sections, module code/menu, acknowledgements, video canonical markup, Bootstrap columns, activity numbering, edge cases (empty/all consensus) |
+| `templateGenerator.test.ts` | 71 | Template generation: structural validity, content correctness, consensus-driven sections, module code/menu, acknowledgements, video canonical markup, Bootstrap columns, activity numbering, edge cases |
+| `malformedHtml.test.ts` | 14 | Empty files, non-HTML, mixed valid/invalid batches, all-fail, broken tags, 20MB size limit |
+| `templateDetection.test.ts` | 15 | Template version extraction, Te Kura detection signals, mixed versions, non-Te Kura tracking |
+| `customRegistry.test.ts` | 6 | Custom exclusion registry pipeline integration, videoSection removal, alert exclusion, empty registry |
+| `firstPageIntegration.test.ts` | 11 | First page fixture processing, batch with first+lesson pages, menu preservation |
+| **Component Tests** | | |
+| `FileUploadZone.test.tsx` | 5 | Rendering, compact mode, ARIA attributes, hidden input, drag-over feedback |
+| `FileList.test.tsx` | 6 | File display, remove callback, count text, singular, empty state, aria-labels |
+| `AnalysisControls.test.tsx` | 7 | Default threshold, slider change, disabled/enabled, loading state, click handler |
+| `AnalysisSummary.test.tsx` | 11 | Stats display, file errors, mixed versions, non-Te Kura, single/two file, zero consensus |
+| `ExclusionRegistryPanel.test.tsx` | 9 | Add/remove/reset/search/filter, validation (duplicate, whitespace), modified indicator |
+| **Integration Tests** | | |
+| `fullPipeline.test.ts` | 27 | End-to-end pipeline with real fixtures, template generation, consensus, thresholds, custom registry, error handling |
 
 When writing tests, always verify:
 - No `style` attributes survive in processed ASTs
