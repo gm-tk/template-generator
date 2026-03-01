@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { analyzeFile } from "@/lib/analyzer/pipeline";
+import { analyzeFile, analyzeFiles } from "@/lib/analyzer/pipeline";
 import type { FileAnalysis, ParsedElement } from "@/lib/analyzer/types";
 
 const FIXTURES_DIR = join(__dirname, "../../test-fixtures");
@@ -312,5 +312,103 @@ describe("analyzeFile pipeline", () => {
       const result = analyzeFile(html, "lesson.html");
       expect(result.moduleCode).toBeNull();
     });
+  });
+
+  describe("Phase 2 — moduleMenuCapture", () => {
+    it("ANZH101_1_0.html has moduleMenuCapture", () => {
+      expect(analysis1.moduleMenuCapture).not.toBeNull();
+      expect(analysis1.moduleMenuCapture!.sourceType).toBe("lesson-page");
+    });
+
+    it("ANZH101_0_0.html is detected as first page with menu capture", () => {
+      const rawHTML0 = loadFixture("ANZH101_0_0.html");
+      const result = analyzeFile(rawHTML0, "ANZH101_0_0.html");
+      expect(result.isFirstPage).toBe(true);
+      expect(result.moduleCode).toBe("ANZH101");
+      expect(result.moduleMenuCapture).not.toBeNull();
+      expect(result.moduleMenuCapture!.sourceType).toBe("first-page");
+    });
+  });
+});
+
+describe("analyzeFiles — batch analysis", () => {
+  let rawHTML0: string;
+  let rawHTML1: string;
+  let rawHTML2: string;
+  let rawHTML3: string;
+
+  beforeAll(() => {
+    rawHTML0 = loadFixture("ANZH101_0_0.html");
+    rawHTML1 = loadFixture("ANZH101_1_0.html");
+    rawHTML2 = loadFixture("ANZH101_2_0.html");
+    rawHTML3 = loadFixture("ANZH101_3_0.html");
+  });
+
+  it("resolves module code across all ANZH101 lesson files", () => {
+    const result = analyzeFiles([
+      { rawHTML: rawHTML1, filename: "ANZH101_1_0.html" },
+      { rawHTML: rawHTML2, filename: "ANZH101_2_0.html" },
+      { rawHTML: rawHTML3, filename: "ANZH101_3_0.html" },
+    ]);
+    expect(result.moduleCode.code).toBe("ANZH101");
+    expect(result.moduleCode.resolution).toBe("single");
+    expect(result.files).toHaveLength(3);
+    expect(result.hasFirstPage).toBe(false);
+    expect(result.hasVideoSection).toBe(true);
+    expect(result.moduleMenu).not.toBeNull();
+  });
+
+  it("batch with first page selects first page menu", () => {
+    const result = analyzeFiles([
+      { rawHTML: rawHTML0, filename: "ANZH101_0_0.html" },
+      { rawHTML: rawHTML1, filename: "ANZH101_1_0.html" },
+      { rawHTML: rawHTML2, filename: "ANZH101_2_0.html" },
+    ]);
+    expect(result.hasFirstPage).toBe(true);
+    expect(result.firstPageAnalysis).not.toBeNull();
+    expect(result.firstPageAnalysis!.filename).toBe("ANZH101_0_0.html");
+    expect(result.moduleMenu!.sourceType).toBe("first-page");
+  });
+
+  it("batch detects template version from majority", () => {
+    const result = analyzeFiles([
+      { rawHTML: rawHTML1, filename: "ANZH101_1_0.html" },
+      { rawHTML: rawHTML2, filename: "ANZH101_2_0.html" },
+      { rawHTML: rawHTML3, filename: "ANZH101_3_0.html" },
+    ]);
+    expect(result.templateVersion).toBe("1-3");
+  });
+
+  it("batch aggregates hasVideoSection across files", () => {
+    const result = analyzeFiles([
+      { rawHTML: rawHTML1, filename: "ANZH101_1_0.html" },
+      { rawHTML: rawHTML2, filename: "ANZH101_2_0.html" },
+    ]);
+    expect(result.hasVideoSection).toBe(true);
+  });
+
+  it("batch without first page uses first lesson page menu", () => {
+    const result = analyzeFiles([
+      { rawHTML: rawHTML1, filename: "ANZH101_1_0.html" },
+      { rawHTML: rawHTML2, filename: "ANZH101_2_0.html" },
+    ]);
+    expect(result.hasFirstPage).toBe(false);
+    expect(result.firstPageAnalysis).toBeNull();
+    expect(result.moduleMenu).not.toBeNull();
+    expect(result.moduleMenu!.sourceType).toBe("lesson-page");
+  });
+
+  it("batch with all four files includes first page analysis", () => {
+    const result = analyzeFiles([
+      { rawHTML: rawHTML0, filename: "ANZH101_0_0.html" },
+      { rawHTML: rawHTML1, filename: "ANZH101_1_0.html" },
+      { rawHTML: rawHTML2, filename: "ANZH101_2_0.html" },
+      { rawHTML: rawHTML3, filename: "ANZH101_3_0.html" },
+    ]);
+    expect(result.files).toHaveLength(4);
+    expect(result.moduleCode.code).toBe("ANZH101");
+    expect(result.moduleCode.resolution).toBe("single");
+    expect(result.hasFirstPage).toBe(true);
+    expect(result.templateVersion).toBe("1-3");
   });
 });
