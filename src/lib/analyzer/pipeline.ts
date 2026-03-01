@@ -3,10 +3,19 @@ import { stripInlineStyles } from "./styleStripper";
 import { stripTextContent } from "./textStripper";
 import { excludeComponents } from "./componentExcluder";
 import { generateFingerprints } from "./fingerprinter";
-import type { FileAnalysis, ParsedElement } from "./types";
-
-const MODULE_CODE_PATTERN = /[A-Z]{2,}[A-Z0-9]*\d+/;
-const FIRST_PAGE_FILENAME_PATTERN = /(?:0[_.]0|[_-]00)/;
+import { isFirstPage as detectFirstPage } from "./firstPageDetector";
+import {
+  extractModuleCode as extractCode,
+  resolveModuleCode,
+} from "./moduleCodeExtractor";
+import { captureModuleMenu } from "./moduleMenuHandler";
+import type {
+  FileAnalysis,
+  ParsedElement,
+  BatchAnalysisResult,
+  ModuleCodeResult,
+  ModuleMenuCapture,
+} from "./types";
 
 /**
  * Full analysis pipeline for a single HTML file.
@@ -18,7 +27,8 @@ const FIRST_PAGE_FILENAME_PATTERN = /(?:0[_.]0|[_-]00)/;
  * 4. Detect special elements (videoSection, acks, moduleMenu)
  * 5. Exclude component elements
  * 6. Generate structural fingerprints
- * 7. Detect first page and extract module code
+ * 7. Detect first page and extract module code (Phase 2 modules)
+ * 8. Capture module menu structure (Phase 2)
  *
  * Returns a complete FileAnalysis object.
  */
@@ -41,10 +51,12 @@ export function analyzeFile(rawHTML: string, filename: string): FileAnalysis {
   // Step 6: Generate structural fingerprints
   const fingerprints = generateFingerprints(ast);
 
-  // Step 7: Detect first page and extract module code
-  const titleText = extractTitleText(rawHTML);
-  const isFirstPage = detectFirstPage(filename, titleText, ast);
-  const moduleCode = extractModuleCode(titleText, filename);
+  // Step 7: Detect first page and extract module code (Phase 2 modules)
+  const isFirstPage = detectFirstPage(filename, rawHTML);
+  const moduleCode = extractCode(rawHTML, filename);
+
+  // Step 8: Capture module menu structure (Phase 2)
+  const moduleMenuCapture = captureModuleMenu(rawHTML, isFirstPage);
 
   return {
     filename,
@@ -55,6 +67,66 @@ export function analyzeFile(rawHTML: string, filename: string): FileAnalysis {
     templateVersion,
     hasVideoSection: detections.hasVideoSection,
     hasAcknowledgements: detections.hasAcknowledgements,
+    moduleMenuCapture,
+  };
+}
+
+/**
+ * Analyzes multiple HTML files and produces cross-file results.
+ *
+ * This function:
+ * 1. Runs analyzeFile() on each file
+ * 2. Resolves the cross-file module code using resolveModuleCode()
+ * 3. Selects the best module menu capture (first page preferred, otherwise first lesson page)
+ * 4. Determines majority template version
+ * 5. Aggregates flags (hasVideoSection, hasAcknowledgements)
+ *
+ * @param files - Array of { rawHTML, filename } objects
+ * @returns BatchAnalysisResult with per-file analyses and cross-file data
+ */
+export function analyzeFiles(
+  files: Array<{ rawHTML: string; filename: string }>
+): BatchAnalysisResult {
+  // Analyze each file individually
+  const analyses = files.map((f) => analyzeFile(f.rawHTML, f.filename));
+
+  // Resolve cross-file module code
+  const perFileCodes: Record<string, string | null> = {};
+  for (const analysis of analyses) {
+    perFileCodes[analysis.filename] = analysis.moduleCode;
+  }
+  const moduleCode = resolveModuleCode(perFileCodes);
+
+  // Find first page analysis
+  const firstPageAnalysis =
+    analyses.find((a) => a.isFirstPage) || null;
+  const hasFirstPage = firstPageAnalysis !== null;
+
+  // Select module menu: prefer first page, otherwise first available
+  let moduleMenu: ModuleMenuCapture | null = null;
+  if (firstPageAnalysis?.moduleMenuCapture) {
+    moduleMenu = firstPageAnalysis.moduleMenuCapture;
+  } else {
+    const firstWithMenu = analyses.find((a) => a.moduleMenuCapture !== null);
+    moduleMenu = firstWithMenu?.moduleMenuCapture || null;
+  }
+
+  // Determine majority template version
+  const templateVersion = getMajorityTemplateVersion(analyses);
+
+  // Aggregate flags
+  const hasVideoSection = analyses.some((a) => a.hasVideoSection);
+  const hasAcknowledgements = analyses.some((a) => a.hasAcknowledgements);
+
+  return {
+    files: analyses,
+    moduleCode,
+    moduleMenu,
+    hasFirstPage,
+    firstPageAnalysis,
+    templateVersion,
+    hasVideoSection,
+    hasAcknowledgements,
   };
 }
 
@@ -76,83 +148,30 @@ function extractTemplateVersion(ast: ParsedElement): string | null {
 }
 
 /**
- * Extract raw title text from the HTML using a simple regex.
- * We use the raw HTML because text nodes are stripped from the AST.
+ * Determine the majority template version from multiple analyses.
+ * Returns the most common template version, or null if none found.
  */
-function extractTitleText(rawHTML: string): string | null {
-  const match = rawHTML.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  return match ? match[1].trim() : null;
-}
-
-/**
- * Detect if this file is a first page (module intro).
- */
-function detectFirstPage(
-  filename: string,
-  titleText: string | null,
-  ast: ParsedElement
-): boolean {
-  // Check filename patterns: 0_0, 0.0, _00, -00
-  if (FIRST_PAGE_FILENAME_PATTERN.test(filename)) {
-    return true;
-  }
-
-  // Check title starts with 0.0 or 00
-  if (titleText) {
-    const trimmed = titleText.trim();
-    if (trimmed.startsWith("0.0") || trimmed.startsWith("00")) {
-      return true;
+function getMajorityTemplateVersion(analyses: FileAnalysis[]): string | null {
+  const counts = new Map<string, number>();
+  for (const analysis of analyses) {
+    if (analysis.templateVersion) {
+      counts.set(
+        analysis.templateVersion,
+        (counts.get(analysis.templateVersion) || 0) + 1
+      );
     }
   }
 
-  // Check if #module-code > h1 contains a module code pattern rather than a lesson number
-  const moduleCodeEl = findElementById(ast, "module-code");
-  if (moduleCodeEl) {
-    const h1 = moduleCodeEl.children.find((c) => c.tagName === "h1");
-    if (h1) {
-      // We can't check text content since text nodes are stripped.
-      // First page detection by #module-code content requires raw HTML.
-      // Handled by title and filename checks above.
+  if (counts.size === 0) return null;
+
+  let maxVersion: string | null = null;
+  let maxCount = 0;
+  for (const [version, count] of counts) {
+    if (count > maxCount) {
+      maxCount = count;
+      maxVersion = version;
     }
   }
 
-  return false;
-}
-
-/**
- * Find an element by its ID in the AST.
- */
-function findElementById(
-  element: ParsedElement,
-  id: string
-): ParsedElement | null {
-  if (element.id === id) {
-    return element;
-  }
-  for (const child of element.children) {
-    const found = findElementById(child, id);
-    if (found) return found;
-  }
-  return null;
-}
-
-/**
- * Extract module code from title text or filename.
- * Pattern: uppercase letters (2+) followed by digits (e.g., ANZH101, ENGI401, OSAI301).
- */
-function extractModuleCode(
-  titleText: string | null,
-  filename: string
-): string | null {
-  // Try title first
-  if (titleText) {
-    const match = titleText.match(MODULE_CODE_PATTERN);
-    if (match) return match[0];
-  }
-
-  // Try filename
-  const filenameMatch = filename.match(MODULE_CODE_PATTERN);
-  if (filenameMatch) return filenameMatch[0];
-
-  return null;
+  return maxVersion;
 }

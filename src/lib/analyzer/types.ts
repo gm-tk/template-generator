@@ -80,4 +80,75 @@ export interface FileAnalysis {
 
   /** Whether this file contains a div.acks element */
   hasAcknowledgements: boolean;
+
+  /** Captured module menu structure for template generation */
+  moduleMenuCapture: ModuleMenuCapture | null;
+}
+
+/**
+ * Represents a captured module menu structure ready for template generation.
+ * The DOM structure is preserved but text content is processed:
+ * - Heading text (h3, h4, h5) is preserved exactly as-is
+ * - Tab label text (li > a inside ul.nav.nav-tabs) is preserved exactly as-is
+ * - All other text (paragraphs, list items) is replaced with lorem ipsum
+ */
+export interface ModuleMenuCapture {
+  /** The source type: 'first-page' (tabbed layout) or 'lesson-page' (simple layout) */
+  sourceType: 'first-page' | 'lesson-page';
+
+  /**
+   * The raw HTML string of the module menu contents,
+   * with text replacements applied.
+   * Ready to be inserted directly into the template output.
+   */
+  processedHTML: string;
+
+  /**
+   * The raw HTML string of the module menu contents BEFORE any text processing.
+   * Kept as a reference for debugging and for the template generator to inspect.
+   */
+  originalHTML: string;
+}
+
+/**
+ * Result of cross-file module code resolution.
+ */
+export interface ModuleCodeResult {
+  /** The resolved module code to use in the template */
+  code: string;
+
+  /** How the code was resolved */
+  resolution: 'single' | 'common-prefix' | 'unrelated';
+
+  /** Individual codes extracted from each file, keyed by filename */
+  perFileCode: Record<string, string | null>;
+}
+
+/**
+ * Result of batch analysis across multiple HTML files.
+ */
+export interface BatchAnalysisResult {
+  /** Per-file analysis results */
+  files: FileAnalysis[];
+
+  /** Resolved module code across all files */
+  moduleCode: ModuleCodeResult;
+
+  /** The selected module menu capture for template generation */
+  moduleMenu: ModuleMenuCapture | null;
+
+  /** Whether any file was detected as a first page */
+  hasFirstPage: boolean;
+
+  /** The first page's FileAnalysis, if one was detected */
+  firstPageAnalysis: FileAnalysis | null;
+
+  /** Template version from the html element (e.g., '1-3') — majority wins */
+  templateVersion: string | null;
+
+  /** Whether ANY file contained a videoSection */
+  hasVideoSection: boolean;
+
+  /** Whether ANY file contained a div.acks */
+  hasAcknowledgements: boolean;
 }
