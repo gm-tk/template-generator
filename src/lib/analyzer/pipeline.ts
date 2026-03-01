@@ -8,12 +8,14 @@ import {
   resolveModuleCode,
 } from "./moduleCodeExtractor";
 import { captureModuleMenu } from "./moduleMenuHandler";
+import { buildConsensus } from "./consensus";
 import type {
   FileAnalysis,
   ParsedElement,
   BatchAnalysisResult,
   ModuleCodeResult,
   ModuleMenuCapture,
+  ConsensusModel,
 } from "./types";
 
 /**
@@ -79,10 +81,12 @@ export function analyzeFile(rawHTML: string, filename: string): FileAnalysis {
  * 5. Aggregates flags (hasVideoSection, hasAcknowledgements)
  *
  * @param files - Array of { rawHTML, filename } objects
+ * @param threshold - Consensus threshold (0-1). Default 0.5 (50%).
  * @returns BatchAnalysisResult with per-file analyses and cross-file data
  */
 export function analyzeFiles(
-  files: Array<{ rawHTML: string; filename: string }>
+  files: Array<{ rawHTML: string; filename: string }>,
+  threshold: number = 0.5
 ): BatchAnalysisResult {
   // Analyze each file individually
   const analyses = files.map((f) => analyzeFile(f.rawHTML, f.filename));
@@ -105,6 +109,9 @@ export function analyzeFiles(
   const hasVideoSection = analyses.some((a) => a.hasVideoSection);
   const hasAcknowledgements = analyses.some((a) => a.hasAcknowledgements);
 
+  // Build consensus model (Phase 3)
+  const consensus = buildConsensus(analyses, threshold);
+
   return {
     files: analyses,
     moduleCode,
@@ -112,6 +119,7 @@ export function analyzeFiles(
     templateVersion,
     hasVideoSection,
     hasAcknowledgements,
+    consensus,
   };
 }
 

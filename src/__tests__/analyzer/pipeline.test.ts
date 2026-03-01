@@ -333,3 +333,67 @@ describe("analyzeFiles — batch analysis", () => {
     expect(result.templateVersion).toBe("1-3");
   });
 });
+
+describe("analyzeFiles — Phase 3 consensus", () => {
+  let rawHTML1: string;
+  let rawHTML2: string;
+  let rawHTML3: string;
+
+  beforeAll(() => {
+    rawHTML1 = loadFixture("ANZH101_1_0.html");
+    rawHTML2 = loadFixture("ANZH101_2_0.html");
+    rawHTML3 = loadFixture("ANZH101_3_0.html");
+  });
+
+  it("batch result includes consensus model", () => {
+    const result = analyzeFiles([
+      { rawHTML: rawHTML1, filename: "ANZH101_1_0.html" },
+      { rawHTML: rawHTML2, filename: "ANZH101_2_0.html" },
+      { rawHTML: rawHTML3, filename: "ANZH101_3_0.html" },
+    ]);
+    expect(result.consensus).toBeDefined();
+    expect(result.consensus.totalFiles).toBe(3);
+    expect(result.consensus.threshold).toBe(0.5);
+    expect(result.consensus.consensusPatterns.length).toBeGreaterThan(0);
+  });
+
+  it("custom threshold is passed through", () => {
+    const result = analyzeFiles(
+      [
+        { rawHTML: rawHTML1, filename: "ANZH101_1_0.html" },
+        { rawHTML: rawHTML2, filename: "ANZH101_2_0.html" },
+      ],
+      0.75
+    );
+    expect(result.consensus.threshold).toBe(0.75);
+  });
+
+  it("consensus has video because all files have videoSection", () => {
+    const result = analyzeFiles([
+      { rawHTML: rawHTML1, filename: "ANZH101_1_0.html" },
+      { rawHTML: rawHTML2, filename: "ANZH101_2_0.html" },
+      { rawHTML: rawHTML3, filename: "ANZH101_3_0.html" },
+    ]);
+    expect(result.consensus.hasVideoSection).toBe(true);
+  });
+
+  it("consensus activityTypes includes standard and interactive", () => {
+    const result = analyzeFiles([
+      { rawHTML: rawHTML1, filename: "ANZH101_1_0.html" },
+      { rawHTML: rawHTML2, filename: "ANZH101_2_0.html" },
+      { rawHTML: rawHTML3, filename: "ANZH101_3_0.html" },
+    ]);
+    expect(result.consensus.activityTypes).toContain("standard");
+    expect(result.consensus.activityTypes).toContain("interactive");
+  });
+
+  it("consensus headingLevels includes h2 and h3", () => {
+    const result = analyzeFiles([
+      { rawHTML: rawHTML1, filename: "ANZH101_1_0.html" },
+      { rawHTML: rawHTML2, filename: "ANZH101_2_0.html" },
+      { rawHTML: rawHTML3, filename: "ANZH101_3_0.html" },
+    ]);
+    expect(result.consensus.headingLevels).toContain("h2");
+    expect(result.consensus.headingLevels).toContain("h3");
+  });
+});
