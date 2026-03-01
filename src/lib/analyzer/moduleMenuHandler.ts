@@ -30,12 +30,10 @@ const PRESERVED_HEADING_TAGS = new Set(['h3', 'h4', 'h5']);
  * List items are normalised to MAX_LIST_ITEMS per list (or fewer if original had fewer).
  *
  * @param rawHTML - The raw HTML string of the file
- * @param isFirstPage - Whether this file is a first page
  * @returns ModuleMenuCapture with processed and original HTML, or null if no menu found
  */
 export function captureModuleMenu(
-  rawHTML: string,
-  isFirstPage: boolean
+  rawHTML: string
 ): ModuleMenuCapture | null {
   const menuHTML = extractModuleMenuInnerHTML(rawHTML);
   if (!menuHTML) return null;
@@ -44,7 +42,6 @@ export function captureModuleMenu(
   const processedHTML = processMenuHTML(menuHTML);
 
   return {
-    sourceType: isFirstPage ? 'first-page' : 'lesson-page',
     processedHTML,
     originalHTML,
   };
@@ -55,7 +52,7 @@ export function captureModuleMenu(
  *
  * Handles two structural variants:
  * 1. <div id="module-menu-content" class="moduleMenu">...content...</div>
- *    (first pages where both ID and class are on the same element)
+ *    (pages where both ID and class are on the same element)
  * 2. <div id="module-menu-content"><div class="moduleMenu">...content...</div></div>
  *    (lesson pages where class is on an inner div)
  *

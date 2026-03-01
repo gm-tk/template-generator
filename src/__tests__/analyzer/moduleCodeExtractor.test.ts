@@ -43,11 +43,6 @@ describe('extractModuleCode', () => {
     expect(extractModuleCode(rawHTML, 'ANZH101_1_0.html')).toBe('ANZH101');
   });
 
-  it('extracts code from real ANZH101_0_0.html', () => {
-    const rawHTML = loadFixture('ANZH101_0_0.html');
-    expect(extractModuleCode(rawHTML, 'ANZH101_0_0.html')).toBe('ANZH101');
-  });
-
   it('does not match single-letter prefix like A1', () => {
     const html = '<html><head><title>A1 Lesson</title></head></html>';
     expect(extractModuleCode(html, 'lesson.html')).toBeNull();
