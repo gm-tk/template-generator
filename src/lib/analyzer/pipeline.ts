@@ -3,7 +3,6 @@ import { stripInlineStyles } from "./styleStripper";
 import { stripTextContent } from "./textStripper";
 import { excludeComponents } from "./componentExcluder";
 import { generateFingerprints } from "./fingerprinter";
-import { isFirstPage as detectFirstPage } from "./firstPageDetector";
 import {
   extractModuleCode as extractCode,
   resolveModuleCode,
@@ -13,7 +12,6 @@ import type {
   FileAnalysis,
   ParsedElement,
   BatchAnalysisResult,
-  ModuleCodeResult,
   ModuleMenuCapture,
 } from "./types";
 
@@ -24,10 +22,10 @@ import type {
  * 1. Parse raw HTML to AST
  * 2. Strip inline styles
  * 3. Strip text content (no-op, handled by parser)
- * 4. Detect special elements (videoSection, acks, moduleMenu)
- * 5. Exclude component elements
+ * 4. Extract template version from <html> element
+ * 5. Detect special elements and exclude components
  * 6. Generate structural fingerprints
- * 7. Detect first page and extract module code (Phase 2 modules)
+ * 7. Extract module code (Phase 2)
  * 8. Capture module menu structure (Phase 2)
  *
  * Returns a complete FileAnalysis object.
@@ -51,18 +49,16 @@ export function analyzeFile(rawHTML: string, filename: string): FileAnalysis {
   // Step 6: Generate structural fingerprints
   const fingerprints = generateFingerprints(ast);
 
-  // Step 7: Detect first page and extract module code (Phase 2 modules)
-  const isFirstPage = detectFirstPage(filename, rawHTML);
+  // Step 7: Extract module code (Phase 2)
   const moduleCode = extractCode(rawHTML, filename);
 
   // Step 8: Capture module menu structure (Phase 2)
-  const moduleMenuCapture = captureModuleMenu(rawHTML, isFirstPage);
+  const moduleMenuCapture = captureModuleMenu(rawHTML);
 
   return {
     filename,
     ast,
     fingerprints,
-    isFirstPage,
     moduleCode,
     templateVersion,
     hasVideoSection: detections.hasVideoSection,
@@ -77,7 +73,7 @@ export function analyzeFile(rawHTML: string, filename: string): FileAnalysis {
  * This function:
  * 1. Runs analyzeFile() on each file
  * 2. Resolves the cross-file module code using resolveModuleCode()
- * 3. Selects the best module menu capture (first page preferred, otherwise first lesson page)
+ * 3. Selects the first available module menu capture
  * 4. Determines majority template version
  * 5. Aggregates flags (hasVideoSection, hasAcknowledgements)
  *
@@ -97,19 +93,9 @@ export function analyzeFiles(
   }
   const moduleCode = resolveModuleCode(perFileCodes);
 
-  // Find first page analysis
-  const firstPageAnalysis =
-    analyses.find((a) => a.isFirstPage) || null;
-  const hasFirstPage = firstPageAnalysis !== null;
-
-  // Select module menu: prefer first page, otherwise first available
-  let moduleMenu: ModuleMenuCapture | null = null;
-  if (firstPageAnalysis?.moduleMenuCapture) {
-    moduleMenu = firstPageAnalysis.moduleMenuCapture;
-  } else {
-    const firstWithMenu = analyses.find((a) => a.moduleMenuCapture !== null);
-    moduleMenu = firstWithMenu?.moduleMenuCapture || null;
-  }
+  // Select module menu: use first available
+  const firstWithMenu = analyses.find((a) => a.moduleMenuCapture !== null);
+  const moduleMenu: ModuleMenuCapture | null = firstWithMenu?.moduleMenuCapture || null;
 
   // Determine majority template version
   const templateVersion = getMajorityTemplateVersion(analyses);
@@ -122,8 +108,6 @@ export function analyzeFiles(
     files: analyses,
     moduleCode,
     moduleMenu,
-    hasFirstPage,
-    firstPageAnalysis,
     templateVersion,
     hasVideoSection,
     hasAcknowledgements,

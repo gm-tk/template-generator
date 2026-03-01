@@ -80,10 +80,6 @@ describe("analyzeFile pipeline", () => {
   });
 
   describe("ANZH101_1_0.html", () => {
-    it("is not a first page", () => {
-      expect(analysis1.isFirstPage).toBe(false);
-    });
-
     it("extracts module code ANZH101", () => {
       expect(analysis1.moduleCode).toBe("ANZH101");
     });
@@ -102,10 +98,6 @@ describe("analyzeFile pipeline", () => {
   });
 
   describe("ANZH101_2_0.html", () => {
-    it("is not a first page", () => {
-      expect(analysis2.isFirstPage).toBe(false);
-    });
-
     it("extracts module code ANZH101", () => {
       expect(analysis2.moduleCode).toBe("ANZH101");
     });
@@ -124,10 +116,6 @@ describe("analyzeFile pipeline", () => {
   });
 
   describe("ANZH101_3_0.html", () => {
-    it("is not a first page", () => {
-      expect(analysis3.isFirstPage).toBe(false);
-    });
-
     it("extracts module code ANZH101", () => {
       expect(analysis3.moduleCode).toBe("ANZH101");
     });
@@ -254,43 +242,6 @@ describe("analyzeFile pipeline", () => {
     });
   });
 
-  describe("First page detection", () => {
-    it("detects first page from filename with 0_0", () => {
-      const html =
-        '<html template="1-3"><head><title>0.0 TEST101</title></head><body></body></html>';
-      const result = analyzeFile(html, "TEST101_0_0.html");
-      expect(result.isFirstPage).toBe(true);
-    });
-
-    it("detects first page from filename with _00", () => {
-      const html =
-        '<html template="1-3"><head><title>Intro TEST101</title></head><body></body></html>';
-      const result = analyzeFile(html, "TEST101_00.html");
-      expect(result.isFirstPage).toBe(true);
-    });
-
-    it("detects first page from title starting with 0.0", () => {
-      const html =
-        '<html template="1-3"><head><title>0.0 TEST101 Introduction</title></head><body></body></html>';
-      const result = analyzeFile(html, "TEST101_intro.html");
-      expect(result.isFirstPage).toBe(true);
-    });
-
-    it("detects first page from title starting with 00", () => {
-      const html =
-        '<html template="1-3"><head><title>00 TEST101 Module Overview</title></head><body></body></html>';
-      const result = analyzeFile(html, "TEST101_intro.html");
-      expect(result.isFirstPage).toBe(true);
-    });
-
-    it("does not detect lesson page as first page", () => {
-      const html =
-        '<html template="1-3"><head><title>1.0 ANZH101 Lesson One</title></head><body></body></html>';
-      const result = analyzeFile(html, "ANZH101_1_0.html");
-      expect(result.isFirstPage).toBe(false);
-    });
-  });
-
   describe("Module code extraction", () => {
     it("extracts module code from title", () => {
       const html =
@@ -317,28 +268,33 @@ describe("analyzeFile pipeline", () => {
   describe("Phase 2 — moduleMenuCapture", () => {
     it("ANZH101_1_0.html has moduleMenuCapture", () => {
       expect(analysis1.moduleMenuCapture).not.toBeNull();
-      expect(analysis1.moduleMenuCapture!.sourceType).toBe("lesson-page");
     });
 
-    it("ANZH101_0_0.html is detected as first page with menu capture", () => {
-      const rawHTML0 = loadFixture("ANZH101_0_0.html");
-      const result = analyzeFile(rawHTML0, "ANZH101_0_0.html");
-      expect(result.isFirstPage).toBe(true);
-      expect(result.moduleCode).toBe("ANZH101");
-      expect(result.moduleMenuCapture).not.toBeNull();
-      expect(result.moduleMenuCapture!.sourceType).toBe("first-page");
+    it("moduleMenuCapture contains processedHTML and originalHTML", () => {
+      expect(analysis1.moduleMenuCapture!.processedHTML).toBeDefined();
+      expect(analysis1.moduleMenuCapture!.originalHTML).toBeDefined();
+    });
+
+    it("moduleMenuCapture processedHTML contains lorem ipsum", () => {
+      expect(analysis1.moduleMenuCapture!.processedHTML).toContain(
+        "Lorem ipsum dolor sit amet."
+      );
+    });
+
+    it("moduleMenuCapture preserves heading text", () => {
+      expect(analysis1.moduleMenuCapture!.processedHTML).toContain(
+        "We are learning:"
+      );
     });
   });
 });
 
 describe("analyzeFiles — batch analysis", () => {
-  let rawHTML0: string;
   let rawHTML1: string;
   let rawHTML2: string;
   let rawHTML3: string;
 
   beforeAll(() => {
-    rawHTML0 = loadFixture("ANZH101_0_0.html");
     rawHTML1 = loadFixture("ANZH101_1_0.html");
     rawHTML2 = loadFixture("ANZH101_2_0.html");
     rawHTML3 = loadFixture("ANZH101_3_0.html");
@@ -353,21 +309,8 @@ describe("analyzeFiles — batch analysis", () => {
     expect(result.moduleCode.code).toBe("ANZH101");
     expect(result.moduleCode.resolution).toBe("single");
     expect(result.files).toHaveLength(3);
-    expect(result.hasFirstPage).toBe(false);
     expect(result.hasVideoSection).toBe(true);
     expect(result.moduleMenu).not.toBeNull();
-  });
-
-  it("batch with first page selects first page menu", () => {
-    const result = analyzeFiles([
-      { rawHTML: rawHTML0, filename: "ANZH101_0_0.html" },
-      { rawHTML: rawHTML1, filename: "ANZH101_1_0.html" },
-      { rawHTML: rawHTML2, filename: "ANZH101_2_0.html" },
-    ]);
-    expect(result.hasFirstPage).toBe(true);
-    expect(result.firstPageAnalysis).not.toBeNull();
-    expect(result.firstPageAnalysis!.filename).toBe("ANZH101_0_0.html");
-    expect(result.moduleMenu!.sourceType).toBe("first-page");
   });
 
   it("batch detects template version from majority", () => {
@@ -387,28 +330,53 @@ describe("analyzeFiles — batch analysis", () => {
     expect(result.hasVideoSection).toBe(true);
   });
 
-  it("batch without first page uses first lesson page menu", () => {
+  it("batch uses first lesson page menu", () => {
     const result = analyzeFiles([
       { rawHTML: rawHTML1, filename: "ANZH101_1_0.html" },
       { rawHTML: rawHTML2, filename: "ANZH101_2_0.html" },
     ]);
-    expect(result.hasFirstPage).toBe(false);
-    expect(result.firstPageAnalysis).toBeNull();
     expect(result.moduleMenu).not.toBeNull();
-    expect(result.moduleMenu!.sourceType).toBe("lesson-page");
   });
 
-  it("batch with all four files includes first page analysis", () => {
+  it("batch with all three files has correct results", () => {
     const result = analyzeFiles([
-      { rawHTML: rawHTML0, filename: "ANZH101_0_0.html" },
       { rawHTML: rawHTML1, filename: "ANZH101_1_0.html" },
       { rawHTML: rawHTML2, filename: "ANZH101_2_0.html" },
       { rawHTML: rawHTML3, filename: "ANZH101_3_0.html" },
     ]);
-    expect(result.files).toHaveLength(4);
+    expect(result.files).toHaveLength(3);
     expect(result.moduleCode.code).toBe("ANZH101");
     expect(result.moduleCode.resolution).toBe("single");
-    expect(result.hasFirstPage).toBe(true);
     expect(result.templateVersion).toBe("1-3");
+  });
+
+  it("batch moduleCode perFileCode contains all filenames", () => {
+    const result = analyzeFiles([
+      { rawHTML: rawHTML1, filename: "ANZH101_1_0.html" },
+      { rawHTML: rawHTML2, filename: "ANZH101_2_0.html" },
+      { rawHTML: rawHTML3, filename: "ANZH101_3_0.html" },
+    ]);
+    expect(result.moduleCode.perFileCode).toHaveProperty("ANZH101_1_0.html");
+    expect(result.moduleCode.perFileCode).toHaveProperty("ANZH101_2_0.html");
+    expect(result.moduleCode.perFileCode).toHaveProperty("ANZH101_3_0.html");
+  });
+
+  it("batch aggregates hasAcknowledgements across files", () => {
+    const result = analyzeFiles([
+      { rawHTML: rawHTML1, filename: "ANZH101_1_0.html" },
+      { rawHTML: rawHTML2, filename: "ANZH101_2_0.html" },
+    ]);
+    // Neither fixture has acknowledgements
+    expect(result.hasAcknowledgements).toBe(false);
+  });
+
+  it("batch with single file returns valid result", () => {
+    const result = analyzeFiles([
+      { rawHTML: rawHTML1, filename: "ANZH101_1_0.html" },
+    ]);
+    expect(result.files).toHaveLength(1);
+    expect(result.moduleCode.code).toBe("ANZH101");
+    expect(result.moduleCode.resolution).toBe("single");
+    expect(result.moduleMenu).not.toBeNull();
   });
 });

@@ -12,7 +12,7 @@ function loadFixture(filename: string): string {
 describe('captureModuleMenu', () => {
   it('returns null when no module menu exists in HTML', () => {
     const html = '<html><body><div id="body"><p>No menu here</p></div></body></html>';
-    expect(captureModuleMenu(html, false)).toBeNull();
+    expect(captureModuleMenu(html)).toBeNull();
   });
 
   describe('lesson page menu (ANZH101_1_0.html)', () => {
@@ -23,19 +23,18 @@ describe('captureModuleMenu', () => {
     });
 
     it('captures module menu from lesson page', () => {
-      const result = captureModuleMenu(rawHTML, false);
+      const result = captureModuleMenu(rawHTML);
       expect(result).not.toBeNull();
-      expect(result!.sourceType).toBe('lesson-page');
     });
 
     it('preserves h5 heading text exactly', () => {
-      const result = captureModuleMenu(rawHTML, false);
+      const result = captureModuleMenu(rawHTML);
       expect(result!.processedHTML).toContain('We are learning:');
       expect(result!.processedHTML).toContain('I can:');
     });
 
     it('replaces list item text with lorem ipsum', () => {
-      const result = captureModuleMenu(rawHTML, false);
+      const result = captureModuleMenu(rawHTML);
       // Original list item text should NOT be present
       expect(result!.processedHTML).not.toContain('About early settlement');
       expect(result!.processedHTML).not.toContain('Key historical events');
@@ -45,83 +44,17 @@ describe('captureModuleMenu', () => {
     });
 
     it('preserves original HTML in originalHTML field', () => {
-      const result = captureModuleMenu(rawHTML, false);
+      const result = captureModuleMenu(rawHTML);
       // The original should contain the real text
       expect(result!.originalHTML).toContain('About early settlement');
       expect(result!.originalHTML).toContain('Key historical events');
     });
 
     it('preserves DOM structure (headings, lists)', () => {
-      const result = captureModuleMenu(rawHTML, false);
+      const result = captureModuleMenu(rawHTML);
       expect(result!.processedHTML).toContain('<h5>');
       expect(result!.processedHTML).toContain('<ul>');
       expect(result!.processedHTML).toContain('<li>');
-    });
-  });
-
-  describe('first page menu (ANZH101_0_0.html)', () => {
-    let firstPageHTML: string;
-
-    beforeAll(() => {
-      firstPageHTML = loadFixture('ANZH101_0_0.html');
-    });
-
-    it('captures module menu from first page', () => {
-      const result = captureModuleMenu(firstPageHTML, true);
-      expect(result).not.toBeNull();
-      expect(result!.sourceType).toBe('first-page');
-    });
-
-    it('preserves h3 heading text exactly', () => {
-      const result = captureModuleMenu(firstPageHTML, true);
-      expect(result!.processedHTML).toContain('<span>Understand</span>');
-      expect(result!.processedHTML).toContain('<span>Know</span>');
-      expect(result!.processedHTML).toContain('<span>Do</span>');
-      expect(result!.processedHTML).toContain('<span>Learning intentions</span>');
-      expect(result!.processedHTML).toContain('<span>Supervisors</span>');
-      expect(result!.processedHTML).toContain('<span>How will I know if I\'ve learned it?</span>');
-    });
-
-    it('replaces paragraph text with lorem ipsum', () => {
-      const result = captureModuleMenu(firstPageHTML, true);
-      // Original text should NOT be present
-      expect(result!.processedHTML).not.toContain('Ākonga will:');
-      expect(result!.processedHTML).not.toContain('Ākonga can:');
-      // Lorem ipsum should be present
-      expect(result!.processedHTML).toContain('Lorem ipsum dolor sit amet, consectetur adipisicing elit.');
-    });
-
-    it('replaces list item text with lorem ipsum', () => {
-      const result = captureModuleMenu(firstPageHTML, true);
-      // Original list item text should NOT be present
-      expect(result!.processedHTML).not.toContain('Māori history is the foundational');
-      expect(result!.processedHTML).not.toContain('Generate questions that reflect');
-      // Lorem ipsum list items should be present
-      expect(result!.processedHTML).toContain('Lorem ipsum dolor sit amet.');
-    });
-
-    it('preserves DOM structure (rows, columns, headings)', () => {
-      const result = captureModuleMenu(firstPageHTML, true);
-      expect(result!.processedHTML).toContain('class="row"');
-      expect(result!.processedHTML).toContain('offset-md-0');
-      expect(result!.processedHTML).toContain('<h3>');
-      expect(result!.processedHTML).toContain('<ul>');
-      expect(result!.processedHTML).toContain('<li>');
-    });
-
-    it('preserves original HTML in originalHTML field', () => {
-      const result = captureModuleMenu(firstPageHTML, true);
-      expect(result!.originalHTML).toContain('Māori history is the foundational');
-      expect(result!.originalHTML).toContain('Ākonga will:');
-    });
-
-    it('normalises list items to 3 per list', () => {
-      const result = captureModuleMenu(firstPageHTML, true);
-      // The "Do" section in the first page has 3 list items — should stay 3
-      // Other lists have 1-2 items — should stay at original count
-      const originalLiCount = (result!.originalHTML.match(/<li>/g) || []).length;
-      const processedLiCount = (result!.processedHTML.match(/<li>/g) || []).length;
-      expect(processedLiCount).toBeLessThanOrEqual(originalLiCount);
     });
   });
 
@@ -133,7 +66,7 @@ describe('captureModuleMenu', () => {
           <p>Some paragraph text.</p>
         </div></div>
       </body></html>`;
-      const result = captureModuleMenu(html, false);
+      const result = captureModuleMenu(html);
       expect(result).not.toBeNull();
       expect(result!.processedHTML).toContain('Lorem ipsum');
     });
@@ -145,10 +78,96 @@ describe('captureModuleMenu', () => {
           <ul><li>Item one</li><li>Item two</li></ul>
         </div>
       </body></html>`;
-      const result = captureModuleMenu(html, true);
+      const result = captureModuleMenu(html);
       expect(result).not.toBeNull();
       expect(result!.processedHTML).toContain('Lorem ipsum dolor sit amet.');
       expect(result!.processedHTML).not.toContain('Item one');
+    });
+
+    it('normalises list items to 3 per list', () => {
+      const html = `<html><body>
+        <div id="module-menu-content"><div class="moduleMenu">
+          <ul>
+            <li>Item 1</li>
+            <li>Item 2</li>
+            <li>Item 3</li>
+            <li>Item 4</li>
+            <li>Item 5</li>
+          </ul>
+        </div></div>
+      </body></html>`;
+      const result = captureModuleMenu(html);
+      expect(result).not.toBeNull();
+      const processedLiCount = (result!.processedHTML.match(/<li>/g) || []).length;
+      expect(processedLiCount).toBe(3);
+    });
+
+    it('preserves list items when fewer than 3', () => {
+      const html = `<html><body>
+        <div id="module-menu-content"><div class="moduleMenu">
+          <ul>
+            <li>Item 1</li>
+            <li>Item 2</li>
+          </ul>
+        </div></div>
+      </body></html>`;
+      const result = captureModuleMenu(html);
+      expect(result).not.toBeNull();
+      const processedLiCount = (result!.processedHTML.match(/<li>/g) || []).length;
+      expect(processedLiCount).toBe(2);
+    });
+
+    it('preserves h3 heading text with child spans', () => {
+      const html = `<html><body>
+        <div id="module-menu-content"><div class="moduleMenu">
+          <h3><span>Understand</span></h3>
+          <p>Some text to replace.</p>
+        </div></div>
+      </body></html>`;
+      const result = captureModuleMenu(html);
+      expect(result).not.toBeNull();
+      expect(result!.processedHTML).toContain('<span>Understand</span>');
+    });
+
+    it('preserves h4 heading text exactly', () => {
+      const html = `<html><body>
+        <div id="module-menu-content"><div class="moduleMenu">
+          <h4>Learning outcomes</h4>
+          <p>Paragraph to replace.</p>
+        </div></div>
+      </body></html>`;
+      const result = captureModuleMenu(html);
+      expect(result).not.toBeNull();
+      expect(result!.processedHTML).toContain('Learning outcomes');
+    });
+
+    it('replaces paragraph text with lorem ipsum', () => {
+      const html = `<html><body>
+        <div id="module-menu-content"><div class="moduleMenu">
+          <p>Original paragraph text that should be replaced.</p>
+        </div></div>
+      </body></html>`;
+      const result = captureModuleMenu(html);
+      expect(result).not.toBeNull();
+      expect(result!.processedHTML).not.toContain('Original paragraph text');
+      expect(result!.processedHTML).toContain('Lorem ipsum dolor sit amet, consectetur adipisicing elit.');
+    });
+
+    it('cycles through lorem ipsum variants for list items', () => {
+      const html = `<html><body>
+        <div id="module-menu-content"><div class="moduleMenu">
+          <ul>
+            <li>Item 1</li>
+            <li>Item 2</li>
+            <li>Item 3</li>
+          </ul>
+        </div></div>
+      </body></html>`;
+      const result = captureModuleMenu(html);
+      expect(result).not.toBeNull();
+      expect(result!.processedHTML).toContain('Lorem ipsum dolor sit amet.');
+      expect(result!.processedHTML).toContain('Consetetur sadipscing elitr.');
+      expect(result!.processedHTML).toContain('Sed diam nonumy eirmod tempor.');
     });
   });
 });
