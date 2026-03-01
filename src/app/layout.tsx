@@ -3,7 +3,13 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'HTML Template Analyzer — Te Kura',
-  description: 'Analyze Te Kura HTML lesson files and generate canonical templates from structural consensus.',
+  description: 'Analyze Te Kura HTML lesson files and generate canonical templates from structural consensus patterns.',
+  keywords: ['Te Kura', 'HTML template', 'template analyzer', 'structural analysis', 'consensus'],
+  openGraph: {
+    title: 'HTML Template Analyzer — Te Kura',
+    description: 'Generate canonical templates from Te Kura HTML lesson files.',
+    type: 'website',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

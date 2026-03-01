@@ -6,6 +6,10 @@ interface AnalysisControlsProps {
   fileCount: number;
   isAnalyzing: boolean;
   onRunAnalysis: () => void;
+  batchModeEnabled: boolean;
+  onBatchModeChange: (enabled: boolean) => void;
+  countdownDuration: number;
+  onCountdownDurationChange: (seconds: number) => void;
 }
 
 export default function AnalysisControls({
@@ -14,6 +18,10 @@ export default function AnalysisControls({
   fileCount,
   isAnalyzing,
   onRunAnalysis,
+  batchModeEnabled,
+  onBatchModeChange,
+  countdownDuration,
+  onCountdownDurationChange,
 }: AnalysisControlsProps) {
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4 space-y-4">
@@ -51,6 +59,50 @@ export default function AnalysisControls({
         </p>
       </div>
 
+      {/* Batch Mode toggle */}
+      <div className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          id="batch-mode"
+          checked={batchModeEnabled}
+          onChange={(e) => onBatchModeChange(e.target.checked)}
+          className="mt-1 h-4 w-4 rounded border-gray-300"
+        />
+        <div>
+          <label htmlFor="batch-mode" className="text-sm font-medium cursor-pointer">
+            Batch Mode
+          </label>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Auto-download template and reset for next upload
+          </p>
+
+          {batchModeEnabled && (
+            <div className="flex items-center gap-1.5 mt-2">
+              <span className="text-xs text-gray-500">Countdown:</span>
+              <input
+                type="number"
+                min={1}
+                max={30}
+                value={countdownDuration}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  if (!isNaN(val)) onCountdownDurationChange(val);
+                }}
+                onBlur={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  if (isNaN(val) || val < 1) onCountdownDurationChange(1);
+                  else if (val > 30) onCountdownDurationChange(30);
+                }}
+                className="w-12 text-center text-sm border border-gray-300 rounded px-1 py-0.5
+                           focus:outline-none focus:ring-1 focus:ring-teal-500"
+                aria-label="Countdown duration in seconds"
+              />
+              <span className="text-xs text-gray-500">seconds</span>
+            </div>
+          )}
+        </div>
+      </div>
+
       <button
         onClick={onRunAnalysis}
         disabled={fileCount === 0 || isAnalyzing}
@@ -70,6 +122,8 @@ export default function AnalysisControls({
             </svg>
             Analyzing...
           </span>
+        ) : batchModeEnabled ? (
+          'Analyze & Download'
         ) : (
           `Analyze ${fileCount} ${fileCount === 1 ? 'File' : 'Files'}`
         )}

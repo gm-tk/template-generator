@@ -36,18 +36,21 @@ src/
   app/
     layout.tsx                       # Next.js root layout with Tailwind CSS
     page.tsx                         # Client component — wraps TemplateAnalyzer in ToastProvider
-    globals.css                      # Tailwind CSS v4 import
+    globals.css                      # Tailwind CSS v4 import + countdown-tick keyframe animation
+    icon.svg                         # Favicon — teal rounded square with "T" monogram
   components/
-    TemplateAnalyzer.tsx             # Main orchestrator — state machine, custom registry state, toast integration
+    TemplateAnalyzer.tsx             # Main orchestrator — state machine, custom registry state, batch mode, toast integration
     FileUploadZone.tsx               # Drag-and-drop + file picker, keyboard accessible, 100-file limit, ARIA
     FileList.tsx                     # Uploaded file list with ARIA labels, role="list", 30+ file warning
-    AnalysisControls.tsx             # Consensus threshold slider + Run Analysis button
+    AnalysisControls.tsx             # Consensus threshold slider + Batch Mode toggle + countdown config + Run Analysis button
     ProgressIndicator.tsx            # Step-by-step progress during analysis (4 steps), aria-live
     ResultsPanel.tsx                 # ARIA tablist with arrow key navigation, toast notifications, scrollIntoView
     TemplatePreview.tsx              # Rendered HTML preview via sandboxed iframe (srcDoc)
     TemplateCode.tsx                 # Raw HTML source code viewer (monospace, copy-to-clipboard)
     AnalysisSummary.tsx              # Analysis stats dashboard — file errors, mixed versions, non-Te Kura warnings, ARIA
     ExclusionRegistryPanel.tsx       # Interactive exclusion registry — add/remove/reset/search/filter/validation
+    CountdownOverlay.tsx             # Batch Mode countdown overlay — timer, cancel (button/Escape/backdrop), auto-reset
+    HelpPanel.tsx                    # Slide-out help panel with collapsible documentation sections
     Toaster.tsx                      # Toast notification system (React Context) — info/success/warning/error
   __tests__/
     setup.ts                         # Test setup — imports @testing-library/jest-dom
@@ -67,9 +70,10 @@ src/
     components/
       FileUploadZone.test.tsx        # 5 tests — rendering, compact mode, ARIA, drag-over
       FileList.test.tsx              # 6 tests — file display, remove, aria-labels, empty state
-      AnalysisControls.test.tsx      # 7 tests — threshold, disabled/enabled, loading, click
+      AnalysisControls.test.tsx      # 17 tests — threshold, disabled/enabled, loading, click, batch mode, countdown duration
       AnalysisSummary.test.tsx       # 11 tests — stats, errors, warnings, single/two file messaging
       ExclusionRegistryPanel.test.tsx # 9 tests — add/remove/reset/search/filter/validation
+      CountdownOverlay.test.tsx      # 12 tests — timer ticks, cancel (button/Escape/backdrop), content click isolation
     integration/
       fullPipeline.test.ts           # 27 tests — end-to-end pipeline + template generation with real fixtures
   test-fixtures/
@@ -89,8 +93,9 @@ src/
 | 4 | Template Generator | **Complete** |
 | 5 | Web Application UI | **Complete** |
 | 6 | Refinement and Edge Cases | **Complete** |
+| 7 | Batch Mode, Help Panel, Production Deployment | **Complete** |
 
-**Total tests: 356** (all passing across 18 test files)
+**Total tests: 378** (all passing across 20 test files)
 
 ## Commands
 
@@ -374,6 +379,56 @@ Phase 6 adds robustness, accessibility, and UI polish across 8 work areas:
 - `customRegistry.test.ts` — 6 tests (custom registry pipeline, videoSection removal, alert exclusion, empty registry)
 - `firstPageIntegration.test.ts` — 11 tests (first page processing, batch with first+lesson, menu preservation)
 
+### Phase 7 — Batch Mode, Help Panel, Production Deployment (Complete)
+
+Phase 7 adds a power-user workflow feature, in-app documentation, and production deployment readiness across 3 work areas.
+
+#### Area 1: Batch Mode
+
+A hands-free pipeline for generating templates in rapid succession:
+
+1. **Toggle:** Checkbox in `AnalysisControls` labelled "Batch Mode", persisted in localStorage (`template-analyzer-batch-mode`)
+2. **Flow:** Analysis completes → template auto-downloads → countdown overlay appears → page auto-resets to upload phase
+3. **Configurable countdown:** 1–30 seconds (default 5), persisted in localStorage (`template-analyzer-countdown-duration`)
+4. **Countdown overlay (`CountdownOverlay.tsx`):**
+   - Full-screen overlay with faded/blurred backdrop (`bg-white/80 backdrop-blur-sm`)
+   - Large countdown number with scale-in animation (`countdown-tick` keyframe in `globals.css`)
+   - Shows "Resetting for next upload..." and "✓ Downloaded {filename}"
+   - Three cancel methods (all produce identical behaviour — show normal results view):
+     - **Cancel button** click (autoFocused)
+     - **Escape** key press
+     - **Backdrop click** (clicking the faded background)
+   - Content area clicks do NOT cancel (stopPropagation prevents bubble to backdrop)
+5. **Auto-reset on countdown completion:** Clears files, results, errors; returns to `'upload'` phase. Batch Mode toggle, countdown duration, and threshold all persist.
+6. **New AppPhase:** `'countdown'` added to `type AppPhase = 'upload' | 'ready' | 'analyzing' | 'results' | 'countdown' | 'error'`
+7. **Button text:** "Analyze & Download" when Batch Mode is enabled; normal "Analyze N Files" otherwise
+8. **Download filename:** `{MODULE_CODE}_template.html` or `template.html` for unresolved codes
+
+**New components:**
+- `CountdownOverlay.tsx` — Countdown timer with cancel/complete handlers, Escape listener, backdrop click, content stopPropagation
+
+**Updated components:**
+- `AnalysisControls.tsx` — Added `batchModeEnabled`, `onBatchModeChange`, `countdownDuration`, `onCountdownDurationChange` props
+- `TemplateAnalyzer.tsx` — Batch mode state, localStorage persistence, auto-download logic, countdown handlers, `'countdown'` phase rendering
+
+**Tests (22 new tests across 2 files):**
+- `CountdownOverlay.test.tsx` — 12 tests (renders value, displays filename, timer ticks, completes at zero, cancel button, Escape key, backdrop click cancels, content click does NOT cancel, autoFocus, unmount prevents completion, status messages)
+- `AnalysisControls.test.tsx` — 10 new tests added (batch mode checkbox, toggle callback, countdown input visibility, value display, change callback, clamping min/max, button text changes)
+
+#### Area 2: Help Panel
+
+- **`HelpPanel.tsx`** — Slide-out panel from right side, triggered by "?" button in app header
+- **Collapsible sections:** Getting Started, What This Tool Does, Understanding the Consensus Threshold, Batch Mode, Component Exclusion Registry, Tips
+- **Close methods:** Close button, Escape key, click outside panel
+- **Batch Mode section** documents all three cancel methods and configurable countdown
+
+#### Area 3: Production Deployment
+
+- **Metadata:** `layout.tsx` updated with full `Metadata` including description, keywords, and OpenGraph tags
+- **Favicon:** `src/app/icon.svg` — teal rounded square with monospace "T" monogram
+- **README.md:** Complete project documentation including features, tech stack, getting started, usage guide, Batch Mode instructions, project structure, testing commands, and deployment options (Vercel CLI + GitHub integration)
+- **Build:** `npm run build` succeeds with zero errors
+
 ### Key Type Interfaces (types.ts)
 
 ```typescript
@@ -628,7 +683,7 @@ These are always used in the generated template regardless of source file variat
 
 Test files are in `src/__tests__/`. Test fixtures are in `src/test-fixtures/`. All tests use Vitest with `globals: true`. Component tests use `@testing-library/react` + `@testing-library/user-event` with `// @vitest-environment jsdom` annotation.
 
-**356 tests across 18 test files:**
+**378 tests across 20 test files:**
 
 | Test File | Tests | What It Covers |
 |-----------|-------|----------------|
@@ -648,9 +703,10 @@ Test files are in `src/__tests__/`. Test fixtures are in `src/test-fixtures/`. A
 | **Component Tests** | | |
 | `FileUploadZone.test.tsx` | 5 | Rendering, compact mode, ARIA attributes, hidden input, drag-over feedback |
 | `FileList.test.tsx` | 6 | File display, remove callback, count text, singular, empty state, aria-labels |
-| `AnalysisControls.test.tsx` | 7 | Default threshold, slider change, disabled/enabled, loading state, click handler |
+| `AnalysisControls.test.tsx` | 17 | Default threshold, slider change, disabled/enabled, loading state, click handler, batch mode toggle, countdown duration input, button text changes |
 | `AnalysisSummary.test.tsx` | 11 | Stats display, file errors, mixed versions, non-Te Kura, single/two file, zero consensus |
 | `ExclusionRegistryPanel.test.tsx` | 9 | Add/remove/reset/search/filter, validation (duplicate, whitespace), modified indicator |
+| `CountdownOverlay.test.tsx` | 12 | Timer ticks, completion at zero, cancel (button/Escape/backdrop), content click isolation, autoFocus, unmount cleanup |
 | **Integration Tests** | | |
 | `fullPipeline.test.ts` | 27 | End-to-end pipeline with real fixtures, template generation, consensus, thresholds, custom registry, error handling |
 
