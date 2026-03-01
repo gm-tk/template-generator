@@ -232,6 +232,16 @@ export interface ConsensusModel {
 }
 
 /**
+ * Represents a file that failed to parse or analyze.
+ */
+export interface FileError {
+  /** The filename that failed */
+  filename: string;
+  /** Human-readable error message */
+  error: string;
+}
+
+/**
  * Result of batch analysis across multiple HTML files.
  */
 export interface BatchAnalysisResult {
@@ -255,4 +265,16 @@ export interface BatchAnalysisResult {
 
   /** The consensus model (Phase 3) */
   consensus: ConsensusModel;
+
+  /** Files that failed to parse/analyze */
+  fileErrors: FileError[];
+
+  /** Template version counts across files (version → file count) */
+  templateVersions: Map<string, number>;
+
+  /** Whether more than one template version was detected */
+  isMixedTemplateVersions: boolean;
+
+  /** Filenames that don't appear to be Te Kura template files */
+  nonTekuraFiles: string[];
 }

@@ -1,4 +1,4 @@
-import { isExcludedComponent } from "./componentExclusionRegistry";
+import { isExcludedComponent, COMPONENT_EXCLUSION_REGISTRY } from "./componentExclusionRegistry";
 import type { ParsedElement } from "./types";
 
 export interface ComponentDetections {
@@ -20,8 +20,14 @@ export interface ComponentDetections {
  * template generator. These detections are returned alongside the pruned tree.
  *
  * Mutates the tree in place. Returns detection flags.
+ *
+ * @param root - The AST root element
+ * @param customRegistry - Optional custom exclusion registry. Falls back to default if not provided.
  */
-export function excludeComponents(root: ParsedElement): ComponentDetections {
+export function excludeComponents(
+  root: ParsedElement,
+  customRegistry?: Set<string>
+): ComponentDetections {
   const detections: ComponentDetections = {
     hasVideoSection: false,
     hasAcknowledgements: false,
@@ -32,7 +38,8 @@ export function excludeComponents(root: ParsedElement): ComponentDetections {
   detectSpecialElements(root, detections);
 
   // Second pass: prune excluded components top-down
-  pruneExcluded(root);
+  const registry = customRegistry ?? COMPONENT_EXCLUSION_REGISTRY;
+  pruneExcluded(root, registry);
 
   return detections;
 }
@@ -56,10 +63,10 @@ function detectSpecialElements(
   }
 }
 
-function pruneExcluded(element: ParsedElement): void {
+function pruneExcluded(element: ParsedElement, registry: Set<string>): void {
   // Filter children: remove any that match the exclusion registry
   element.children = element.children.filter((child) => {
-    if (isExcludedComponent(child.classes)) {
+    if (child.classes.some((cls) => registry.has(cls))) {
       child.excluded = true;
       return false;
     }
@@ -68,7 +75,7 @@ function pruneExcluded(element: ParsedElement): void {
 
   // Recurse into remaining children
   for (const child of element.children) {
-    pruneExcluded(child);
+    pruneExcluded(child, registry);
   }
 }
 

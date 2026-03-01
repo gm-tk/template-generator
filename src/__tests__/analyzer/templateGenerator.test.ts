@@ -62,6 +62,10 @@ function createMockBatchResult(
         hasVideoSection: overrides.hasVideoSection ?? false,
         hasAcknowledgements: overrides.hasAcknowledgements ?? false,
         consensus: { ...defaultConsensus, ...overrides.consensus },
+        fileErrors: [],
+        templateVersions: new Map(),
+        isMixedTemplateVersions: false,
+        nonTekuraFiles: [],
     };
 }
 

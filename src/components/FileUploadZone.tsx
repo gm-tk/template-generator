@@ -6,12 +6,22 @@ interface FileUploadZoneProps {
   onFilesAdded: (files: File[]) => void;
   existingFilenames: Set<string>;
   compact?: boolean;
+  currentFileCount?: number;
+  onNotification?: (message: string) => void;
 }
 
-export default function FileUploadZone({ onFilesAdded, existingFilenames, compact }: FileUploadZoneProps) {
+const MAX_FILES = 100;
+
+export default function FileUploadZone({ onFilesAdded, existingFilenames, compact, currentFileCount = 0, onNotification }: FileUploadZoneProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const showNotification = useCallback((msg: string) => {
+    setNotification(msg);
+    setTimeout(() => setNotification(null), 4000);
+    onNotification?.(msg);
+  }, [onNotification]);
 
   const processFiles = useCallback((fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
@@ -32,15 +42,21 @@ export default function FileUploadZone({ onFilesAdded, existingFilenames, compac
       }
     }
 
+    // Check 100-file hard limit
+    const totalAfterAdd = currentFileCount + htmlFiles.length;
+    if (totalAfterAdd > MAX_FILES) {
+      showNotification(`Maximum ${MAX_FILES} files supported. Please reduce your selection.`);
+      return;
+    }
+
     if (skipped.length > 0) {
-      setNotification(`Skipped: ${skipped.join(', ')}`);
-      setTimeout(() => setNotification(null), 4000);
+      showNotification(`Skipped: ${skipped.join(', ')}`);
     }
 
     if (htmlFiles.length > 0) {
       onFilesAdded(htmlFiles);
     }
-  }, [onFilesAdded, existingFilenames]);
+  }, [onFilesAdded, existingFilenames, currentFileCount, showNotification]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -62,6 +78,13 @@ export default function FileUploadZone({ onFilesAdded, existingFilenames, compac
     inputRef.current?.click();
   }, []);
 
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      inputRef.current?.click();
+    }
+  }, []);
+
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     processFiles(e.target.files);
     if (inputRef.current) inputRef.current.value = '';
@@ -71,9 +94,13 @@ export default function FileUploadZone({ onFilesAdded, existingFilenames, compac
     <div className="relative">
       <div
         onClick={handleClick}
+        onKeyDown={handleKeyDown}
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
+        role="button"
+        tabIndex={0}
+        aria-label="Upload HTML files for analysis"
         className={`
           border-2 border-dashed rounded-lg cursor-pointer transition-colors
           ${isDragOver
@@ -90,7 +117,11 @@ export default function FileUploadZone({ onFilesAdded, existingFilenames, compac
             </svg>
           )}
           <p className={compact ? 'text-sm text-gray-600' : 'text-base text-gray-700'}>
-            {compact ? 'Drop more HTML files here, or click to browse' : 'Drop HTML files here, or click to browse'}
+            {isDragOver
+              ? 'Drop files here'
+              : compact
+                ? 'Drop more HTML files here, or click to browse'
+                : 'Drop HTML files here, or click to browse'}
           </p>
           {!compact && (
             <p className="text-xs text-gray-400">Only .html files are accepted</p>
@@ -103,11 +134,13 @@ export default function FileUploadZone({ onFilesAdded, existingFilenames, compac
           accept=".html"
           onChange={handleInputChange}
           className="hidden"
+          aria-hidden="true"
+          tabIndex={-1}
         />
       </div>
 
       {notification && (
-        <div className="mt-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded text-sm text-amber-700">
+        <div className="mt-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded text-sm text-amber-700" role="alert">
           {notification}
         </div>
       )}
